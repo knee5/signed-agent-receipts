@@ -1,0 +1,321 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://signed-agent-receipts.local/schema/agent_run.schema.json",
+  "title": "Agent Run Ledger Record",
+  "description": "Versioned JSONL record for an agent run receipt.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "source_runtime",
+    "source_path",
+    "started_at",
+    "ended_at",
+    "duration_ms",
+    "actor",
+    "profile",
+    "session_id",
+    "title",
+    "inputs",
+    "tool_calls",
+    "file_diffs",
+    "urls",
+    "evidence",
+    "costs",
+    "policy_flags",
+    "receipt_path",
+    "raw_refs",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "agent-run-ledger.v1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_runtime": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_path": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "ended_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "duration_ms": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "actor": {
+      "type": ["string", "null"]
+    },
+    "profile": {
+      "type": ["string", "null"]
+    },
+    "session_id": {
+      "type": ["string", "null"]
+    },
+    "title": {
+      "type": "string"
+    },
+    "inputs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/input"
+      }
+    },
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/tool_call"
+      }
+    },
+    "file_diffs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/file_diff"
+      }
+    },
+    "urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "costs": {
+      "$ref": "#/$defs/costs"
+    },
+    "policy_flags": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/policy_flag"
+      }
+    },
+    "receipt_path": {
+      "type": ["string", "null"]
+    },
+    "raw_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "signature": {
+      "$ref": "#/$defs/signature"
+    }
+  },
+  "$defs": {
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "content": {
+          "type": ["string", "null"]
+        },
+        "summary": {
+          "type": ["string", "null"]
+        },
+        "path": {
+          "type": ["string", "null"]
+        },
+        "url": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "tool_call": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "args_summary", "status", "started_at", "ended_at", "elapsed_ms", "artifacts"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "args_summary": {
+          "type": ["string", "null"]
+        },
+        "status": {
+          "type": ["string", "null"]
+        },
+        "started_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "ended_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "elapsed_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "file_diff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "status", "additions", "deletions"],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "status": {
+          "type": ["string", "null"]
+        },
+        "additions": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "deletions": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "patch_path": {
+          "type": ["string", "null"]
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "caption"],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "path": {
+          "type": ["string", "null"]
+        },
+        "url": {
+          "type": ["string", "null"]
+        },
+        "caption": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "ref", "heuristic"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": ["tool_call_id", "session_artifact", "record_url", "time-window-heuristic"]
+        },
+        "ref": {
+          "type": ["string", "null"]
+        },
+        "heuristic": {
+          "type": "boolean"
+        }
+      }
+    },
+    "costs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "total", "tokens_in", "tokens_out", "notes"],
+      "properties": {
+        "currency": {
+          "type": ["string", "null"]
+        },
+        "total": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "tokens_in": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "tokens_out": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "notes": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "policy_flag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity", "code", "message"],
+      "properties": {
+        "severity": {
+          "type": "string",
+          "enum": ["info", "warning", "high", "critical"]
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "canonicalization", "public_key", "key_id", "value"],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "ed25519"
+        },
+        "canonicalization": {
+          "type": "string",
+          "const": "canonical-json-v1"
+        },
+        "public_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key_id": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

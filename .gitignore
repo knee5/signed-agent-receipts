@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.coverage
+build/
+dist/
+*.egg-info/
+.venv/
+
+# Local receipt signing keys. The documented default private key lives outside
+# the repo at ~/.config/signed-agent-receipts/ed25519_private.pem.
+ed25519_private.pem
+*.private.pem
+.signed-agent-receipts/

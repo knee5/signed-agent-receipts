@@ -1,0 +1,291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://signed-agent-receipts.local/schema/receipt.schema.json",
+  "title": "Agent Receipt v0.2",
+  "description": "Signed binding of request -> git PR deliverable -> typed evidence. The signature covers the whole document minus the 'signature' field, canonicalized as canonical-json-v1 (sorted keys, no whitespace, UTF-8).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "issued_at",
+    "purpose",
+    "audience",
+    "nonce",
+    "request",
+    "deliverable",
+    "evidence",
+    "key",
+    "authorization",
+    "signers",
+    "judgment_calls",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "agent-receipt.v0.2"
+    },
+    "receipt_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "issued_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Self-asserted by the signer. Untrusted across org boundaries; see SECURITY-MODEL.md."
+    },
+    "purpose": {
+      "type": "string",
+      "description": "What the receipt is for. The PR gate requires 'github-pr-gate'."
+    },
+    "audience": {
+      "type": "string",
+      "description": "Intended verifier scope, e.g. 'github:owner/name'. Prevents cross-repo replay."
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 16,
+      "description": "Emitter-generated randomness for replay dedup at stateful gates. NOT a verifier challenge; interactive challenge-response is a roadmap item."
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hash", "content_type", "source", "preview"],
+      "properties": {
+        "hash": {
+          "$ref": "#/$defs/sha256_prefixed",
+          "description": "SHA-256 over the EXACT bytes of the task the agent was given (UTF-8 for text). No normalization. The issuer must retain the bytes to re-verify."
+        },
+        "content_type": {
+          "type": "string"
+        },
+        "source": {
+          "type": ["string", "null"],
+          "description": "Where the request came from (issue URL, task file, ...). Disclosure, not proof."
+        },
+        "preview": {
+          "type": ["string", "null"],
+          "description": "Short human-readable summary of the request. Disclosure, not proof."
+        }
+      }
+    },
+    "deliverable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "repo", "pr_number", "base_sha", "head_sha", "diff_hash"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "git_pr"
+        },
+        "repo": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "pr_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "base_sha": {
+          "$ref": "#/$defs/git_sha"
+        },
+        "head_sha": {
+          "$ref": "#/$defs/git_sha",
+          "description": "The signed work head. The PR head may extend it with commits that touch only receipts/** (sign-then-attach)."
+        },
+        "diff_hash": {
+          "$ref": "#/$defs/sha256_prefixed",
+          "description": "SHA-256 of the canonical `git diff base_sha...head_sha` bytes. The exact pinned command is documented in docs/RECEIPTS-GATE.md; verifiers recompute it independently. Never derived from the mutable PR body."
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/evidence"
+      }
+    },
+    "key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key_id", "valid_from", "valid_until"],
+      "properties": {
+        "key_id": {
+          "$ref": "#/$defs/sha256_prefixed"
+        },
+        "valid_from": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "valid_until": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The signer's CLAIMED window. Verifiers enforce the window they granted in their own trusted_signers.yml."
+        }
+      }
+    },
+    "authorization": {
+      "type": ["object", "string", "null"],
+      "description": "RESERVED (unwired in v0.2): reference to an external authorization/intent token. Receipts attest work; they do not authorize it. Present so carrying an authz ref later is not a schema break."
+    },
+    "signers": {
+      "type": "array",
+      "description": "RESERVED (unwired in v0.2): multi-signer / witness co-signatures. Must be [] in v0.2.",
+      "maxItems": 0
+    },
+    "judgment_calls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Optional disclosure of judgment calls made during the work. Never a gate input."
+    },
+    "run_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Optional run_ids of agent-run-ledger.v1 records describing the runs that produced this deliverable."
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "canonicalization", "public_key", "key_id", "value"],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "ed25519"
+        },
+        "canonicalization": {
+          "type": "string",
+          "const": "canonical-json-v1"
+        },
+        "public_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key_id": {
+          "$ref": "#/$defs/sha256_prefixed"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256_prefixed": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "git_sha": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["method"],
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "required": ["method", "cmd", "expected_exit_code"],
+          "properties": {
+            "method": {
+              "const": "re_executable"
+            },
+            "cmd": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Gates execute this ONLY if the exact string is allowlisted in the receiving repo's base-branch policy."
+            },
+            "cwd": {
+              "type": ["string", "null"]
+            },
+            "expected_exit_code": {
+              "type": "integer"
+            },
+            "expected_output_sha256": {
+              "$ref": "#/$defs/sha256_prefixed"
+            },
+            "expected_output_contains": {
+              "type": "string"
+            },
+            "description": {
+              "type": ["string", "null"]
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["method", "path", "sha256"],
+          "properties": {
+            "method": {
+              "const": "content_addressed"
+            },
+            "path": {
+              "type": "string",
+              "description": "Repo-relative path, hashed at the signed head_sha by the verifier."
+            },
+            "sha256": {
+              "$ref": "#/$defs/sha256_prefixed"
+            },
+            "description": {
+              "type": ["string", "null"]
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["method", "provider"],
+          "anyOf": [
+            { "required": ["check_name"] },
+            { "required": ["check_run_id"] }
+          ],
+          "properties": {
+            "method": {
+              "const": "ci_attested"
+            },
+            "provider": {
+              "const": "github"
+            },
+            "check_name": {
+              "type": "string"
+            },
+            "check_run_id": {
+              "type": "integer"
+            },
+            "sha": {
+              "$ref": "#/$defs/git_sha",
+              "description": "Commit the check ran on; defaults to deliverable.head_sha."
+            },
+            "expected_conclusion": {
+              "const": "success"
+            },
+            "url": {
+              "type": ["string", "null"]
+            },
+            "description": {
+              "type": ["string", "null"]
+            }
+          }
+        },
+        {
+          "additionalProperties": false,
+          "required": ["method", "claim"],
+          "properties": {
+            "method": {
+              "const": "self_claimed"
+            },
+            "claim": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Displayed by verifiers, NEVER satisfies policy. Output of the process being evaluated is not evidence."
+            }
+          }
+        }
+      ]
+    }
+  }
+}

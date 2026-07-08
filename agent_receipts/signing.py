@@ -124,3 +124,17 @@ def public_key_fingerprint(public_bytes: bytes) -> str:
     digest = hashes.Hash(hashes.SHA256())
     digest.update(public_bytes)
     return digest.finalize().hex()
+
+
+def public_key_material(key_path: str | Path | None = None) -> tuple[str, str]:
+    """Return (public_key_b64, key_id) for the signing key, creating it if absent.
+
+    Lets callers embed key identity inside a record body before signing, so the
+    signed body and the signature envelope carry the same key_id.
+    """
+    private_key = load_or_create_private_key(Path(key_path).expanduser() if key_path else default_private_key_path())
+    public_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+    return encode_b64(public_bytes), "sha256:" + public_key_fingerprint(public_bytes)

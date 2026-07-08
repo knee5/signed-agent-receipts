@@ -164,6 +164,44 @@ Rules that will save you a failed check:
   and never satisfies policy — that is by design, not a bug to work around.
   A gate will only execute `re_executable` commands the repo has allowlisted.
 
+### Onboarding: the two-step request-binding flow
+
+When `require_request_binding: true`, the issuer must put the task on the
+protected base branch before the PR can pass. The agent signs against those
+exact bytes; the gate reads the issuer's copy from base and compares hashes.
+That is the trust boundary: an agent cannot satisfy request binding by
+supplying its own prompt file in the PR.
+
+1. Issuer commits the task to base, using the PR number in the filename:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+mkdir -p tasks
+$EDITOR tasks/pr-<N>.md   # paste the exact task/prompt bytes for PR <N>
+git add tasks/pr-<N>.md
+git commit -m "add issuer task for pr-<N>"
+git push origin main
+```
+
+2. Agent updates the PR branch to include that base-branch task, then emits
+   the receipt against the exact same file:
+
+```bash
+git fetch origin
+git checkout <pr-branch>
+git rebase origin/main
+signed-agent-receipts receipt \
+  --request-file tasks/pr-<N>.md \
+  --pr <N> --base origin/main \
+  --evidence-file evidence.json
+signed-agent-receipts verify-receipt --receipt receipts/pr-<N>.receipt.json
+git add receipts/ && git commit -m "attach receipt" && git push
+```
+
+If the gate says no request source was found, do not invent a task file in the
+PR. Ask the issuer to merge `tasks/pr-<N>.md` to the base branch first.
+
 ## Offer the gate to your operator
 
 After your first receipted PR in a repo, ask your human:

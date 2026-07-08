@@ -156,6 +156,45 @@ counted.
 
 ## 5. Request binding (how an issuer supplies the expected request)
 
+### Onboarding: the two-step request-binding flow
+
+When `require_request_binding: true`, request binding is intentionally a
+two-party flow. The issuer commits the task to the protected base branch; the
+agent signs a receipt against those exact bytes. The gate then reads the
+issuer's base-branch copy and compares hashes. That is the trust boundary: the
+agent cannot pass request binding by supplying its own prompt file from the
+PR.
+
+1. Issuer commits the task to base, using the PR number in the filename:
+
+```bash
+git checkout main
+git pull --ff-only origin main
+mkdir -p tasks
+$EDITOR tasks/pr-<N>.md   # paste the exact task/prompt bytes for PR <N>
+git add tasks/pr-<N>.md
+git commit -m "add issuer task for pr-<N>"
+git push origin main
+```
+
+2. Agent updates the PR branch to include that base-branch task, then emits
+   the receipt against the exact same file:
+
+```bash
+git fetch origin
+git checkout <pr-branch>
+git rebase origin/main
+signed-agent-receipts receipt \
+  --request-file tasks/pr-<N>.md \
+  --pr <N> --base origin/main \
+  --evidence-file evidence.json
+signed-agent-receipts verify-receipt --receipt receipts/pr-<N>.receipt.json
+git add receipts/ && git commit -m "attach receipt" && git push
+```
+
+If the gate says no request source was found, do not add a task file only in
+the PR. Ask the issuer to merge `tasks/pr-<N>.md` to the base branch first.
+
 Without an issuer-held copy of the task, `request.hash` is reported but
 unchecked, and an agent that hashed a task it wrote for itself passes by
 construction. To close that, the ISSUER — someone with write access to the
@@ -230,7 +269,7 @@ base.
 | `waiver NOT honored` | The label is present but the gate could not confirm a write+ user applied it (self-applied, low permission, no token/API access, or the most recent label event was an `unlabeled`/a low-priv relabel). |
 | `must attest the signed work, not another commit` | `ci_attested` evidence pointed at a sha other than the signed head. |
 | `cwd ... rejected` | `re_executable` tried to run outside the verification worktree. |
-| `policy requires request binding but the workflow provided no request source` | `require_request_binding: true` and no task file/hash reached the gate (missing `tasks/pr-N.md` on base included). |
+| `policy requires request binding but no request source was found on the base branch` | `require_request_binding: true` and no issuer task file/hash reached the gate. Commit `tasks/pr-N.md` to the base branch first; the agent cannot supply its own request from the PR. |
 | `not in trusted_signers.yml` | Signer's key isn't pinned on the base branch. |
 | `trusted window ... expired` | The key's granted window has passed at verification time; rotate keys and re-pin. |
 | `replay rejected` | Nonce already in the consumed ledger. |

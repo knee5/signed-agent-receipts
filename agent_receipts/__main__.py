@@ -8,7 +8,10 @@ from pathlib import Path
 from . import DEFAULT_OUTPUT_DIR
 from .analytics import capture_event
 from .jsonl import read_jsonl, write_jsonl
+from .ci_gate import main as ci_gate_main
+from .fleet_digest import write_day_digest
 from .normalizers import normalize_all
+from .records import make_record
 from .render import render_jsonl, render_records
 from .signing import default_private_key_path, verify_record
 
@@ -34,6 +37,23 @@ def main(argv: list[str] | None = None) -> int:
 
     verify = sub.add_parser("verify", help="Verify signed receipt JSONL records.")
     verify.add_argument("--jsonl", required=True)
+
+    self_receipt = sub.add_parser("self-receipt", help="Emit one signed receipt for install/self-test workflows.")
+    self_receipt.add_argument("--out", required=True)
+    self_receipt.add_argument("--title", default="signed-agent-receipts self-test")
+    self_receipt.add_argument("--summary", default="Self-test receipt emitted by signed-agent-receipts.")
+    self_receipt.add_argument("--signing-key", default=None, help=f"Ed25519 private key path. Defaults to {default_private_key_path()}.")
+
+    ci_gate = sub.add_parser("ci-gate", help="Fail when an agent PR lacks a valid signed receipt.")
+    ci_gate.add_argument("--receipt-glob", action="append", dest="receipt_globs")
+    ci_gate.add_argument("--actor", default=None)
+    ci_gate.add_argument("--changed-files", default=None)
+
+    digest = sub.add_parser("fleet-digest", help="Write a signed daily fleet-ledger digest from receipt JSONL.")
+    digest.add_argument("--jsonl", required=True)
+    digest.add_argument("--out-dir", required=True)
+    digest.add_argument("--day", default=None)
+    digest.add_argument("--signing-key", default=None, help=f"Ed25519 private key path. Defaults to {default_private_key_path()}.")
 
     args = parser.parse_args(argv)
     capture_event("agent_receipts_cli_started", {"command": args.command})
@@ -79,6 +99,27 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{result.status}: {run} ({result.reason})")
         print(f"Verified {valid}/{len(results)} records in {args.jsonl}")
         return 0 if not invalid else 1
+    if args.command == "self-receipt":
+        record = make_record(source_runtime="signed-agent-receipts", source_path=args.out, title=args.title, actor="agent")
+        record["inputs"] = [{"type": "summary", "summary": args.summary}]
+        count = write_jsonl([record], args.out, key_path=args.signing_key)
+        result = verify_record(read_jsonl(args.out)[0])
+        print(f"Wrote {count} self-test receipt to {args.out}: {result.status}")
+        return 0 if result.valid else 1
+    if args.command == "ci-gate":
+        ci_args = []
+        for pattern in args.receipt_globs or []:
+            ci_args.extend(["--receipt-glob", pattern])
+        if args.actor:
+            ci_args.extend(["--actor", args.actor])
+        if args.changed_files:
+            ci_args.extend(["--changed-files", args.changed_files])
+        return ci_gate_main(ci_args)
+    if args.command == "fleet-digest":
+        md_path, digest_jsonl = write_day_digest(args.jsonl, args.out_dir, day=args.day, key_path=args.signing_key)
+        print(f"Fleet digest: {md_path}")
+        print(f"Signed digest JSONL: {digest_jsonl}")
+        return 0
     return 2
 
 

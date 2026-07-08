@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Signed Agent Receipts Verifier</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #0b1020; color: #e7ecff; }
+    main { max-width: 980px; margin: 0 auto; padding: 48px 20px; }
+    .card { border: 1px solid #283457; border-radius: 18px; background: #111936; padding: 24px; box-shadow: 0 24px 80px #0008; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 280px; resize: vertical; border-radius: 14px; border: 1px solid #35446c; background: #081025; color: #e7ecff; padding: 16px; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+    button { margin-top: 14px; border: 0; border-radius: 999px; padding: 12px 18px; background: #57d68d; color: #07140c; font-weight: 800; cursor: pointer; }
+    #status { margin-top: 18px; padding: 16px; border-radius: 14px; background: #1b2444; white-space: pre-wrap; }
+    .ok { color: #73ffa8; }
+    .bad { color: #ff8585; }
+    .muted { color: #9facd4; }
+    a { color: #8ab4ff; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Signed Agent Receipts Verifier</h1>
+  <p class="muted">Paste or drag a signed-agent-receipts JSONL file. Verification runs entirely in your browser; no server upload.</p>
+  <section class="card" id="dropzone">
+    <textarea id="input" placeholder='Paste one or more JSONL receipt records here...'></textarea>
+    <button id="verify">Verify Ed25519 signatures</button>
+    <div id="status" class="muted">Waiting for receipt JSONL.</div>
+  </section>
+</main>
+<script>
+const text = document.getElementById('input');
+const statusBox = document.getElementById('status');
+const dropzone = document.getElementById('dropzone');
+
+function b64ToBytes(value) {
+  const bin = atob(value);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function canonicalize(value) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return '[' + value.map(canonicalize).join(',') + ']';
+  return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + canonicalize(value[k])).join(',') + '}';
+}
+
+async function verifyRecord(record) {
+  const sig = record.signature;
+  if (!sig) throw new Error('missing signature');
+  if (sig.algorithm !== 'ed25519') throw new Error('unsupported algorithm: ' + sig.algorithm);
+  if (sig.canonicalization !== 'canonical-json-v1') throw new Error('unsupported canonicalization: ' + sig.canonicalization);
+  const unsigned = JSON.parse(JSON.stringify(record));
+  delete unsigned.signature;
+  const payload = new TextEncoder().encode(canonicalize(unsigned));
+  const key = await crypto.subtle.importKey('raw', b64ToBytes(sig.public_key), { name: 'Ed25519' }, false, ['verify']);
+  const ok = await crypto.subtle.verify({ name: 'Ed25519' }, key, b64ToBytes(sig.value), payload);
+  if (!ok) throw new Error('signature does not match record content');
+  return record.run_id || 'unknown-run';
+}
+
+async function verifyAll() {
+  const lines = text.value.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) {
+    statusBox.className = 'bad';
+    statusBox.textContent = 'No JSONL records found.';
+    return;
+  }
+  const results = [];
+  let valid = 0;
+  for (let i = 0; i < lines.length; i++) {
+    try {
+      const record = JSON.parse(lines[i]);
+      const runId = await verifyRecord(record);
+      valid++;
+      results.push(`✅ line ${i + 1}: ${runId}`);
+    } catch (err) {
+      results.push(`❌ line ${i + 1}: ${err.message}`);
+    }
+  }
+  statusBox.className = valid === lines.length ? 'ok' : 'bad';
+  statusBox.textContent = `Verified ${valid}/${lines.length} record(s)\n` + results.join('\n');
+}
+
+document.getElementById('verify').addEventListener('click', verifyAll);
+for (const eventName of ['dragenter', 'dragover']) {
+  dropzone.addEventListener(eventName, e => { e.preventDefault(); dropzone.style.borderColor = '#57d68d'; });
+}
+for (const eventName of ['dragleave', 'drop']) {
+  dropzone.addEventListener(eventName, e => { e.preventDefault(); dropzone.style.borderColor = '#283457'; });
+}
+dropzone.addEventListener('drop', async e => {
+  const file = e.dataTransfer.files[0];
+  if (!file) return;
+  text.value = await file.text();
+  verifyAll();
+});
+</script>
+</body>
+</html>

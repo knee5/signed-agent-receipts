@@ -1,0 +1,27 @@
+name: receipts-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  receipts-gate:
+    name: receipts-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install signed-agent-receipts
+        run: python -m pip install .
+      - name: Verify signed receipts for agent PRs
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          signed-agent-receipts ci-gate \
+            --actor "$GITHUB_ACTOR" \
+            --receipt-glob '.github/receipts/**/*.jsonl'

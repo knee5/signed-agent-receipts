@@ -12,6 +12,12 @@ Durable generated outputs default to a neutral local config path:
 
 Requires Python 3.10+.
 
+Agent-native one-line install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/knee5/signed-agent-receipts/main/install.sh | bash
+```
+
 Install locally:
 
 ```bash
@@ -44,6 +50,18 @@ Verify signed JSONL receipts:
 
 ```bash
 signed-agent-receipts verify --jsonl ~/.config/signed-agent-receipts/output/agent_run.jsonl
+```
+
+Emit a minimal receipt for a PR/install self-test:
+
+```bash
+signed-agent-receipts self-receipt --out .github/receipts/agent.jsonl --summary "Changed X; tests Y."
+```
+
+Run the merge gate used by agent PRs:
+
+```bash
+signed-agent-receipts ci-gate --actor "$GITHUB_ACTOR" --receipt-glob '.github/receipts/**/*.jsonl'
 ```
 
 Run tests:

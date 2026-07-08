@@ -41,11 +41,22 @@ runs:
     - uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
-    - name: Install receipts gate
+    # Both python steps run in isolated mode (-I) from a neutral directory,
+    # NEVER the PR checkout. A composite action's default working-directory is
+    # $GITHUB_WORKSPACE — the untrusted PR — and `python -m pip` there resolves
+    # a top-level `pip.py`/`pip/` dropped by the PR before the real pip. -I
+    # drops CWD (and env) from sys.path, and RUNNER_TEMP holds no attacker
+    # files, so neither the installer nor the gate can import workspace code.
+    # The PR reaches the gate only as DATA via --repo-dir. The action installs
+    # from github.action_path, which is this action pinned at the ref the
+    # consumer selected (pin a tag/SHA), not the PR.
+    - name: Install receipts gate (isolated from the PR workspace)
       shell: bash
-      run: python -m pip install --quiet "${{ github.action_path }}"
-    - name: Run receipts gate
+      working-directory: ${{ runner.temp }}
+      run: python -I -m pip install --isolated --quiet "${{ github.action_path }}"
+    - name: Run receipts gate (isolated; PR workspace is data, never importable)
       shell: bash
+      working-directory: ${{ runner.temp }}
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         REQUEST_SOURCE_FILE: ${{ inputs.request-source-file }}
@@ -58,4 +69,4 @@ runs:
         if [ -n "$REQUEST_HASH" ]; then
           args+=(--request-hash "$REQUEST_HASH")
         fi
-        signed-agent-receipts "${args[@]}"
+        python -I -m agent_receipts "${args[@]}"

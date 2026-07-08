@@ -46,14 +46,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_GATE: ${{ github.workspace }}/trusted-gate
+        # -I (isolated) + a run from RUNNER_TEMP so neither pip nor the gate
+        # can import code from CWD. Belt-and-suspenders on top of the pr/ vs
+        # trusted-gate/ split: the PR reaches the gate only via --repo-dir.
+        working-directory: ${{ runner.temp }}
         run: |
-          if [ ! -f trusted-gate/agent_receipts/gate.py ]; then
+          if [ ! -f "$TRUSTED_GATE/agent_receipts/gate.py" ]; then
             echo "::warning::receipts-gate is not on the base branch yet (bootstrap). Nothing was enforced," \
                  "and nothing from the PR was executed. Merging the gate to the base branch arms it."
             exit 0
           fi
-          python -m pip install --quiet ./trusted-gate
-          signed-agent-receipts gate \
+          python -I -m pip install --isolated --quiet "$TRUSTED_GATE"
+          python -I -m agent_receipts gate \
             --event "$GITHUB_EVENT_PATH" \
             --repo-dir "$GITHUB_WORKSPACE/pr" \
             --request-source-file "tasks/pr-${PR_NUMBER}.md"

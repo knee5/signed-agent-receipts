@@ -57,6 +57,10 @@ class PolicySettings:
     require_receipt: bool = True
     waiver_label: str = "human-waiver"
     require_request_binding: bool = False
+    # Whether require_request_binding was set explicitly in the file. Its
+    # default is the permissive value, so an armed gate refuses to run unless
+    # the policy states it outright (see run_gate). Never itself a policy knob.
+    require_request_binding_set: bool = False
     distrust_ci_when_workflows_change: bool = True
     re_executable_allowlist: list[str] = field(default_factory=list)
 
@@ -149,6 +153,7 @@ def parse_policy(text: str) -> Policy:
             policy.settings.waiver_label = value
         elif key == "require_request_binding":
             policy.settings.require_request_binding = _require_bool(key, value)
+            policy.settings.require_request_binding_set = True
         elif key == "distrust_ci_when_workflows_change":
             policy.settings.distrust_ci_when_workflows_change = _require_bool(key, value)
         elif key == "re_executable_allowlist":

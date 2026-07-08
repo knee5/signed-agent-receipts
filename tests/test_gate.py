@@ -9,6 +9,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from agent_receipts import gate as gate_module
 from agent_receipts.gate import GateContext, consume_receipt, run_gate
 from agent_receipts.gitdiff import canonical_diff_hash, rev_parse
 from agent_receipts.receipt import build_receipt, hash_request_text
@@ -19,6 +20,7 @@ from tests.support import (
     REPO_NAME,
     emit_and_attach_receipt,
     git,
+    label_event_log,
     make_fixture,
     passing_check_runs,
     permission_map,
@@ -410,7 +412,7 @@ class LyingAgentTests(GateTestCase):
         # issuer-side vouches for is exactly the "solved an easier task"
         # attack — the gate must fail it rather than shrug.
         policy = POLICY_YML.replace(
-            "settings:\n", "settings:\n  require_request_binding: true\n"
+            "require_request_binding: false", "require_request_binding: true"
         )
         fixture = make_fixture(self.tmp, policy_text=policy)
         emit_and_attach_receipt(
@@ -494,6 +496,60 @@ class WaiverTests(GateTestCase):
         self.assertFalse(report.waived)
         self.assertReportContains(report, "PR modifies gate configuration")
 
+    def seq_ctx(self, fixture, actions, perms):
+        return self.ctx(
+            fixture,
+            labels=["human-waiver"],
+            label_events_fetcher=label_event_log("human-waiver", actions),
+            permission_fetcher=permission_map(perms),
+        )
+
+    def test_stale_maintainer_label_does_not_authorize_bot_relabel(self):
+        # The attack: a maintainer applied then REMOVED the waiver earlier; a
+        # low-priv bot re-applies it now. The gate must authorize on the LATEST
+        # event (bot), not inherit the old maintainer 'labeled'.
+        fixture = make_fixture(self.tmp)
+        report = run_gate(
+            self.seq_ctx(
+                fixture,
+                [("labeled", "maintainer-max"), ("unlabeled", "maintainer-max"), ("labeled", "agent-bot")],
+                {"maintainer-max": "admin", "agent-bot": "triage"},
+            )
+        )
+        self.assertFalse(report.passed)
+        self.assertFalse(report.waived)
+        self.assertReportContains(report, "agent-bot")
+        self.assertReportContains(report, "NOT honored")
+
+    def test_latest_event_unlabeled_refuses_even_with_prior_maintainer_label(self):
+        # Label removed by the maintainer is the newest event; a stale payload
+        # still listing the label must not resurrect the old 'labeled'.
+        fixture = make_fixture(self.tmp)
+        report = run_gate(
+            self.seq_ctx(
+                fixture,
+                [("labeled", "maintainer-max"), ("unlabeled", "maintainer-max")],
+                {"maintainer-max": "admin"},
+            )
+        )
+        self.assertFalse(report.passed)
+        self.assertFalse(report.waived)
+        self.assertReportContains(report, "not currently maintainer-applied")
+
+    def test_maintainer_reapply_after_removal_passes(self):
+        # Legitimate: applied, removed, then RE-applied by a maintainer. Latest
+        # 'labeled' is the maintainer's, so the waiver is honored.
+        fixture = make_fixture(self.tmp)
+        report = run_gate(
+            self.seq_ctx(
+                fixture,
+                [("labeled", "maintainer-max"), ("unlabeled", "helper"), ("labeled", "maintainer-max")],
+                {"maintainer-max": "maintain", "helper": "triage"},
+            )
+        )
+        self.assertTrue(report.passed, [l.text for l in report.lines])
+        self.assertTrue(report.waived)
+
 
 class ModeTests(GateTestCase):
     def test_bootstrap_mode_passes_with_notice_when_no_trust_anchor(self):
@@ -512,6 +568,34 @@ class ModeTests(GateTestCase):
         self.assertFalse(report.bootstrap)
         self.assertReportContains(report, "half-configured")
 
+    def test_missing_policy_with_anchor_fails_closed_no_default_fallback(self):
+        # An armed repo whose policy.yml was reverted/half-merged must NOT fall
+        # back to built-in defaults — that silently disables request binding.
+        fixture = make_fixture(self.tmp, with_trust_anchor=True, with_policy=False)
+        emit_and_attach_receipt(
+            fixture,
+            evidence=[{"method": "ci_attested", "provider": "github", "check_name": "python-ci"}],
+        )
+        report = run_gate(self.ctx(fixture))
+        self.assertFalse(report.passed)
+        self.assertReportContains(report, "policy.yml is missing")
+
+    def test_partial_policy_missing_request_binding_fails_closed(self):
+        # A policy that never mentions require_request_binding leaves it at the
+        # permissive default. An armed gate must reject that as under-specified
+        # rather than silently run with the task-substitution defense off.
+        fixture = make_fixture(
+            self.tmp,
+            policy_text="version: 1\nsettings:\n  waiver_label: human-waiver\n",
+        )
+        emit_and_attach_receipt(
+            fixture,
+            evidence=[{"method": "ci_attested", "provider": "github", "check_name": "python-ci"}],
+        )
+        report = run_gate(self.ctx(fixture))
+        self.assertFalse(report.passed)
+        self.assertReportContains(report, "does not explicitly set settings.require_request_binding")
+
     def test_malformed_trust_anchor_fails_closed(self):
         fixture = make_fixture(self.tmp)
         git(fixture.repo_dir, "checkout", "-q", "main")
@@ -524,6 +608,45 @@ class ModeTests(GateTestCase):
         report = run_gate(self.ctx(fixture))
         self.assertFalse(report.passed)
         self.assertReportContains(report, "failing closed")
+
+
+class IssueEventPaginationTests(unittest.TestCase):
+    def test_events_beyond_cap_raise_so_waiver_fails_closed(self):
+        # Event flooding: if the label history never ends within the page cap,
+        # the latest event cannot be proven, so _github_issue_events raises and
+        # the waiver caller fails closed. Simulate an endless 'next' link.
+        calls = {"n": 0}
+
+        def endless(url, token):
+            calls["n"] += 1
+            return ([], '<https://api.github.com/next>; rel="next"')
+
+        original = gate_module._github_get_json
+        gate_module._github_get_json = endless
+        try:
+            with self.assertRaises(ValueError):
+                gate_module._github_issue_events("owner/repo", 7, "tok")
+        finally:
+            gate_module._github_get_json = original
+        self.assertEqual(calls["n"], gate_module.ISSUE_EVENTS_MAX_PAGES, "must stop at the cap, not loop forever")
+
+    def test_full_pagination_returns_all_events(self):
+        pages = [
+            ([{"id": 1, "event": "labeled"}], '<u2>; rel="next"'),
+            ([{"id": 2, "event": "unlabeled"}], ""),
+        ]
+        seq = iter(pages)
+
+        def paged(url, token):
+            return next(seq)
+
+        original = gate_module._github_get_json
+        gate_module._github_get_json = paged
+        try:
+            events = gate_module._github_issue_events("owner/repo", 7, "tok")
+        finally:
+            gate_module._github_get_json = original
+        self.assertEqual([e["id"] for e in events], [1, 2])
 
 
 class LedgerTests(unittest.TestCase):

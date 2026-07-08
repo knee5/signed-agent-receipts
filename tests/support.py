@@ -19,6 +19,7 @@ version: 1
 settings:
   require_receipt: true
   waiver_label: human-waiver
+  require_request_binding: false
   distrust_ci_when_workflows_change: true
   re_executable_allowlist:
     - "echo fixture-check"
@@ -168,11 +169,27 @@ def passing_check_runs(repo: str, sha: str) -> list[dict]:
     return [{"id": 11, "name": "python-ci", "status": "completed", "conclusion": "success", "head_sha": sha}]
 
 
-def waiver_label_events(label: str, actor: str):
-    """Fetcher stub: the waiver label was applied by `actor`."""
-    return lambda repo, pr_number: [
-        {"event": "labeled", "label": {"name": label}, "actor": {"login": actor}}
+def label_event_log(label: str, actions: list[tuple[str, str]]):
+    """Fetcher stub for issue events. `actions` is a chronological list of
+    (event_type, actor_login) — e.g. [("labeled", "max"), ("unlabeled", "max"),
+    ("labeled", "bot")] — rendered with increasing ids/timestamps so the gate's
+    latest-event logic sees them in order regardless of list order."""
+    log = [
+        {
+            "id": 1000 + i,
+            "event": etype,
+            "created_at": f"2026-07-08T00:00:{i:02d}+00:00",
+            "label": {"name": label},
+            "actor": {"login": actor},
+        }
+        for i, (etype, actor) in enumerate(actions, start=1)
     ]
+    return lambda repo, pr_number: list(log)
+
+
+def waiver_label_events(label: str, actor: str):
+    """Fetcher stub: the waiver label was applied once by `actor`."""
+    return label_event_log(label, [("labeled", actor)])
 
 
 def permission_map(mapping: dict[str, str]):

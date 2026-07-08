@@ -215,15 +215,31 @@ def run_gate(ctx: GateContext) -> GateReport:
         report.fail(f"trusted_signers.yml on base branch is malformed (failing closed): {exc}")
         return report
 
+    # An armed repo (trust anchor present) must carry an EXPLICIT policy. A
+    # missing policy.yml used to silently fall back to built-in defaults, and a
+    # partial policy silently left require_request_binding=False — either of
+    # which quietly disables the "solved an easier task" defense the moment a
+    # policy is reverted or half-merged. Both now fail closed.
     if policy_bytes is None:
-        policy = Policy.default()
-        report.info("no policy.yml on base branch; using built-in default policy (strong evidence for all paths)")
-    else:
-        try:
-            policy = parse_policy(policy_bytes.decode("utf-8"))
-        except PolicyConfigError as exc:
-            report.fail(f"policy.yml on base branch is malformed (failing closed): {exc}")
-            return report
+        report.fail(
+            f"trust anchor is present on base branch '{ctx.base_ref}' but {POLICY_PATH} is missing. "
+            "An armed gate requires an explicit acceptance policy; it will NOT fall back to built-in defaults, "
+            "because a reverted or half-merged policy must fail closed rather than silently relax enforcement. "
+            "Commit .agent-receipts/policy.yml (see docs/RECEIPTS-GATE.md)."
+        )
+        return report
+    try:
+        policy = parse_policy(policy_bytes.decode("utf-8"))
+    except PolicyConfigError as exc:
+        report.fail(f"policy.yml on base branch is malformed (failing closed): {exc}")
+        return report
+    if not policy.settings.require_request_binding_set:
+        report.fail(
+            f"{POLICY_PATH} does not explicitly set settings.require_request_binding. Leaving it implicit "
+            "silently defaults it to false and disables request binding (the task-substitution defense). "
+            "Set settings.require_request_binding explicitly to true or false."
+        )
+        return report
 
     try:
         pr_changed = changed_paths(ctx.repo_dir, base_tip, ctx.pr_head_sha)
@@ -306,15 +322,38 @@ def _waiver_authorized(ctx: GateContext, report: GateReport, waiver_label: str) 
         report.warn(f"waiver label '{waiver_label}': cannot fetch label events ({exc}) — waiver NOT honored (fail closed)")
         return False
 
-    applier: str | None = None
-    for event in events:
-        if not isinstance(event, dict) or event.get("event") != "labeled":
-            continue
-        if (event.get("label") or {}).get("name") == waiver_label:
-            applier = (event.get("actor") or {}).get("login")
+    # Only the CURRENT state of the label authorizes. Take the single most
+    # recent labeled/unlabeled event for the waiver label (issue events are
+    # chronological, but we sort by id to be independent of fetch order) and
+    # require it to be a `labeled` — a stale maintainer `labeled` that was
+    # later `unlabeled` and then re-applied by a low-priv actor must NOT
+    # authenticate against the old event. _github_issue_events paginates to
+    # the end (or raises above, failing closed) so the newest event is seen.
+    relevant = [
+        e
+        for e in events
+        if isinstance(e, dict)
+        and e.get("event") in ("labeled", "unlabeled")
+        and (e.get("label") or {}).get("name") == waiver_label
+    ]
+    if not relevant:
+        report.warn(
+            f"waiver label '{waiver_label}': no labeled/unlabeled events for it on this PR "
+            "— waiver NOT honored (fail closed)"
+        )
+        return False
+    latest = max(relevant, key=_label_event_order)
+    if latest.get("event") != "labeled":
+        report.warn(
+            f"waiver label '{waiver_label}': the most recent label event is '{latest.get('event')}', so the label "
+            "is not currently maintainer-applied (a later re-label by another actor does not inherit an earlier "
+            "maintainer's authority) — waiver NOT honored (fail closed)"
+        )
+        return False
+    applier = (latest.get("actor") or {}).get("login")
     if not applier:
         report.warn(
-            f"waiver label '{waiver_label}': no 'labeled' event with an identifiable actor found for this PR "
+            f"waiver label '{waiver_label}': most recent 'labeled' event has no identifiable actor "
             "— waiver NOT honored (fail closed)"
         )
         return False
@@ -660,18 +699,38 @@ def _github_check_runs(repo: str, sha: str, token: str) -> list[dict]:
     return runs
 
 
+ISSUE_EVENTS_MAX_PAGES = 100  # 100 * 100 = 10k events; beyond this we cannot prove the latest
+
+
+def _label_event_order(event: dict) -> tuple:
+    """Recency key for a label event. GitHub event ids increase monotonically
+    with time; created_at is the tiebreak. Newer sorts larger."""
+    return (int(event.get("id") or 0), str(event.get("created_at") or ""))
+
+
 def _github_issue_events(repo: str, pr_number: int, token: str) -> list[dict]:
-    """Issue events for a PR (labels applied/removed, with actor). PRs are
-    issues in the GitHub API, so this covers pull requests."""
+    """ALL issue events for a PR (labels applied/removed, with actor), oldest
+    first. PRs are issues in the GitHub API, so this covers pull requests.
+
+    Paginating to the end is a security requirement, not a nicety: the waiver
+    decision depends on the LATEST label event, and stopping early would let an
+    attacker bury a low-priv re-label past the fetch window behind an older
+    maintainer event. If the history is larger than the cap we cannot prove
+    which event is newest, so we raise and the caller fails closed."""
     events: list[dict] = []
     url: str | None = f"https://api.github.com/repos/{repo}/issues/{pr_number}/events?per_page=100"
-    for _ in range(10):  # bounded pagination
+    for _ in range(ISSUE_EVENTS_MAX_PAGES):
         if url is None:
-            break
+            return events
         payload, links = _github_get_json(url, token)
         if isinstance(payload, list):
             events.extend(payload)
         url = _next_page(links)
+    if url is not None:
+        raise ValueError(
+            f"issue events for #{pr_number} exceed {ISSUE_EVENTS_MAX_PAGES} pages; cannot determine the latest "
+            "waiver-label event (possible event flooding) — failing closed"
+        )
     return events
 
 

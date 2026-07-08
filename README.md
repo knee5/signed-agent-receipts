@@ -45,6 +45,26 @@ key. Every PR needs a receipt — the only bypass is a maintainer-applied
 Install and operate: [docs/RECEIPTS-GATE.md](docs/RECEIPTS-GATE.md) ·
 Receipt schema: [schema/receipt.schema.json](schema/receipt.schema.json)
 
+### Verify a receipt without trusting the author
+
+Any v0.2 receipt in this repo can be checked locally in one command — no CI
+run, no maintainer, no trust in the PR author required:
+
+```bash
+signed-agent-receipts verify-receipt --receipt receipts/pr-3.receipt.json
+```
+
+This validates the receipt against the schema, checks the Ed25519 signature
+over the canonical JSON body, and — when run inside a git checkout containing
+the commits — independently recomputes the PR diff hash from the pinned
+`base_sha...head_sha`. The exact `git diff` invocation is pinned in
+[docs/RECEIPTS-GATE.md](docs/RECEIPTS-GATE.md#7-the-canonical-diff-exactly),
+so an auditor can recompute the hash with nothing but git. What a passing
+check does and does not prove is defined in
+[SECURITY-MODEL.md](SECURITY-MODEL.md): the record is unaltered since signing
+and a specific key signed it — not that the work is good, and not (on first
+contact) who holds the key.
+
 ---
 
 Durable generated outputs default to a neutral local config path:

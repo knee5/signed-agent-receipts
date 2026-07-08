@@ -36,6 +36,8 @@ are not on PyPI yet; install from git to get them:
 
 ```bash
 python3 -m pip install "git+https://github.com/knee5/signed-agent-receipts"
+# pipx users:
+pipx install "git+https://github.com/knee5/signed-agent-receipts"
 ```
 
 ### 2. Emit a signed receipt for your recent work

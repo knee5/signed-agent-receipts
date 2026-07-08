@@ -421,7 +421,13 @@ class LyingAgentTests(GateTestCase):
         )
         report = run_gate(self.ctx(fixture))
         self.assertFalse(report.passed)
-        self.assertReportContains(report, "no request source")
+        self.assertReportContains(
+            report,
+            "policy requires request binding but no request source was found on the base branch. "
+            "The issuer must commit the task to `tasks/pr-<N>.md` on the base branch before this PR can pass "
+            "(the agent cannot supply its own request — that's the trust boundary). "
+            "See docs/RECEIPTS-GATE.md §request-binding.",
+        )
 
     def test_ci_attestation_discounted_when_pr_changes_workflows(self):
         fixture = make_fixture(self.tmp)

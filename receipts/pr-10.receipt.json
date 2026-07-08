@@ -1,0 +1,45 @@
+{
+  "audience": "github:knee5/signed-agent-receipts",
+  "authorization": null,
+  "deliverable": {
+    "base_sha": "e44b3f0a4a906e946b9d1a43c4576b883602fe76",
+    "diff_hash": "sha256:884c44cb4e2e1bf481cbe47be6d8a699a26e3ff87bd4e3f08df8aed493739922",
+    "head_sha": "7b8aadaed453f8b3c30973ae2372e2a712b1ed34",
+    "pr_number": 10,
+    "repo": "knee5/signed-agent-receipts",
+    "type": "git_pr"
+  },
+  "evidence": [
+    {
+      "cmd": "python -m unittest",
+      "expected_exit_code": 0,
+      "method": "re_executable"
+    }
+  ],
+  "issued_at": "2026-07-08T15:16:52+00:00",
+  "judgment_calls": [],
+  "key": {
+    "key_id": "sha256:4367e7bd8e5e733f3a6a9930dace9eb5311e656765c1cf0061a339faf0d0d366",
+    "valid_from": "2026-07-08T03:58:35+00:00",
+    "valid_until": "2027-07-08T03:58:35+00:00"
+  },
+  "nonce": "e424a6cb599a6472d53e5a05fffe16cb",
+  "purpose": "github-pr-gate",
+  "receipt_id": "rcpt_82d009af39e08ff1",
+  "request": {
+    "content_type": "text/plain; charset=utf-8",
+    "hash": "sha256:a9714d105035e7045469a14467b8f411a8d119136608b8efd14cd6fc6eae411f",
+    "preview": null,
+    "source": ".hermes-task-pr-10.md"
+  },
+  "run_refs": [],
+  "schema_version": "agent-receipt.v0.2",
+  "signature": {
+    "algorithm": "ed25519",
+    "canonicalization": "canonical-json-v1",
+    "key_id": "sha256:4367e7bd8e5e733f3a6a9930dace9eb5311e656765c1cf0061a339faf0d0d366",
+    "public_key": "GfgF1RD7dNn/KBEPhj3PRoW5w7c8TmYK1tq5mvOrFkw=",
+    "value": "h74ura/pnFyqHJTx410XqHPBaWr708fR0yV2rjfM85Gv6/y+puly54GGmceIZhBL8ASpIA+xidkvTggS38egBA=="
+  },
+  "signers": []
+}

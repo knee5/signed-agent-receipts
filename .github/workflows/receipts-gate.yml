@@ -1,4 +1,13 @@
 # Dogfood: this repo runs its own receipts-gate on every PR.
+#
+# THE ONE RULE OF THIS FILE: the gate executes from the TRUSTED base branch,
+# never from the PR. `uses: ./` after checking out PR content would run the
+# PR's own copy of gate.py — any PR could rewrite the verifier to say yes.
+# So the PR checkout below is pure DATA (the thing being verified), and the
+# code that verifies it is installed from a second checkout of the base ref.
+# External consumers get the same property by pinning a released tag/SHA of
+# this action (see docs/RECEIPTS-GATE.md).
+#
 # labeled/unlabeled are included so applying the human-waiver label re-runs
 # the gate instead of leaving a stale failing check.
 name: receipts-gate
@@ -10,14 +19,41 @@ on:
 permissions:
   contents: read
   checks: read
+  # The gate verifies WHO applied a waiver label (issue events + collaborator
+  # permission lookups).
+  issues: read
+  pull-requests: read
 
 jobs:
   receipts-gate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out PR (UNTRUSTED — data under verification, never executed)
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-      - uses: ./
+          fetch-depth: 0          # the gate recomputes diffs; it needs history
+          path: pr
+      - name: Check out trusted verifier from the base branch
+        uses: actions/checkout@v4
         with:
-          github-token: ${{ github.token }}
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: trusted-gate
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run receipts gate from the trusted copy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ ! -f trusted-gate/agent_receipts/gate.py ]; then
+            echo "::warning::receipts-gate is not on the base branch yet (bootstrap). Nothing was enforced," \
+                 "and nothing from the PR was executed. Merging the gate to the base branch arms it."
+            exit 0
+          fi
+          python -m pip install --quiet ./trusted-gate
+          signed-agent-receipts gate \
+            --event "$GITHUB_EVENT_PATH" \
+            --repo-dir "$GITHUB_WORKSPACE/pr" \
+            --request-source-file "tasks/pr-${PR_NUMBER}.md"

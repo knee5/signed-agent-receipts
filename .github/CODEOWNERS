@@ -1,9 +1,15 @@
 # The trust anchor and policy decide whose signatures this repo accepts and
-# what evidence is enough. Changes to them — and to the gate's own workflow
-# wiring — require maintainer review.
+# what evidence is enough. The gate/verifier CODE decides what those checks
+# mean, and the packaging metadata decides what `pip install` of the gate
+# actually runs — all of it is security surface and requires maintainer
+# review. (The workflow wiring under /.github/ runs the gate from the trusted
+# base ref; rewiring it is equivalent to rewriting the gate.)
 #
 # NOTE: CODEOWNERS only bites when branch protection on main requires
 # code-owner review. Repo-settings checklist lives in docs/RECEIPTS-GATE.md.
 /.agent-receipts/  @knee5
 /.github/          @knee5
 /action.yml        @knee5
+/agent_receipts/   @knee5
+/schema/           @knee5
+/pyproject.toml    @knee5

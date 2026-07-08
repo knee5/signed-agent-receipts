@@ -39,14 +39,19 @@ instead of leaving a stale failing check.
 
 **The gate must never execute from the PR it is judging.** Pinning a tag or
 SHA of this action gives you that: the action installs its own pinned copy,
-and the PR checkout is only the data being verified. What you must NOT do is
-run a local copy of the gate out of the PR checkout — `uses: ./`, or
-`pip install .` against the checked-out PR — because then any PR can rewrite
-the verifier and approve itself. If you vendor the gate in the same repo it
-guards (as this repo does), check out the base ref into a second directory
-and install from there; see this repo's own
-[receipts-gate.yml](../.github/workflows/receipts-gate.yml) and the wiring
-tests in `tests/test_workflow_security.py`.
+and the PR checkout is only the data being verified. It also runs both of its
+python steps in isolated mode (`python -I`) from a scratch directory, so a PR
+that drops a `pip.py` or `agent_receipts/` into the workspace cannot get its
+code imported ahead of the trusted install — you get this for free by pinning
+the action. What you must NOT do is run a local copy of the gate out of the
+PR checkout — `uses: ./`, or `pip install .` / `python -m ...` from the
+checked-out PR — because then any PR can rewrite the verifier and approve
+itself. If you vendor the gate in the same repo it guards (as this repo
+does), check out the base ref into a second directory, install with
+`python -I -m pip install --isolated`, and run with `python -I -m
+agent_receipts` from outside the PR checkout; see this repo's own
+[receipts-gate.yml](../.github/workflows/receipts-gate.yml) and the wiring +
+isolation tests in `tests/test_workflow_security.py`.
 
 ## 2. Add the trust anchor and policy on your default branch
 
@@ -69,10 +74,20 @@ example. The shape: rules map path globs to the evidence methods that are
 acceptable for those paths (first matching rule wins, unmatched paths use
 `default_require`, which defaults to the strong classes).
 
+Once a trust anchor exists, `policy.yml` is **required and must be explicit**.
+An armed gate will not fall back to built-in defaults if the file is missing
+(a reverted or half-merged policy fails closed instead of silently relaxing),
+and it rejects a policy that never states `settings.require_request_binding`
+— leaving it implicit would silently disable request binding. Set it to
+`true` or `false` on purpose. Everything else keeps safe defaults, but that
+one control must be declared.
+
 Until `trusted_signers.yml` exists on the base branch, the gate runs in
 **bootstrap mode**: it reports receipts and passes with a loud
 "NOT CONFIGURED" notice, so adopting the workflow never bricks the repo.
-Merging the trust anchor arms it.
+Merging the trust anchor arms it. (A `policy.yml` on the base branch *without*
+a `trusted_signers.yml` is treated as half-configured and fails closed — it
+will not silently drop to bootstrap.)
 
 ## 3. Lock the config down (repo settings — required)
 
@@ -212,7 +227,7 @@ base.
 | `STALE: signed head_sha is not an ancestor` | Force-push/rebase after signing. Re-emit. |
 | `commits after the signed head_sha touch non-receipt paths` | Work was added after signing. Re-emit. |
 | `PR modifies gate configuration` | `.agent-receipts/**` changed. Maintainer review, then an admin merge via branch-protection bypass — the waiver label does not clear this. |
-| `waiver NOT honored` | The label is present but the gate could not confirm a write+ user applied it (self-applied, low permission, or no token/API access). |
+| `waiver NOT honored` | The label is present but the gate could not confirm a write+ user applied it (self-applied, low permission, no token/API access, or the most recent label event was an `unlabeled`/a low-priv relabel). |
 | `must attest the signed work, not another commit` | `ci_attested` evidence pointed at a sha other than the signed head. |
 | `cwd ... rejected` | `re_executable` tried to run outside the verification worktree. |
 | `policy requires request binding but the workflow provided no request source` | `require_request_binding: true` and no task file/hash reached the gate (missing `tasks/pr-N.md` on base included). |
@@ -221,3 +236,5 @@ base.
 | `replay rejected` | Nonce already in the consumed ledger. |
 | `NOT CONFIGURED` | No trust anchor on the base branch; bootstrap mode (no expiry — arm it by merging the anchor). |
 | `half-configured` | `policy.yml` exists on base without `trusted_signers.yml`; fails closed instead of demoting to bootstrap. |
+| `policy.yml is missing` | Trust anchor present but no policy on the base branch; an armed gate will not fall back to defaults. Commit `policy.yml`. |
+| `does not explicitly set settings.require_request_binding` | Policy is under-specified; declare `require_request_binding` true/false so the control can't be disabled by omission. |

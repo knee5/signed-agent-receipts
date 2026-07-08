@@ -114,6 +114,19 @@ CODEOWNERS must cover not just `.agent-receipts/` but the gate code
 (`agent_receipts/`), the schema, the packaging metadata, and the workflows —
 rewiring the workflow is equivalent to rewriting the gate.
 
+"Trusted ref" has to include *how the interpreter resolves code*, not just
+which files it installs. A composite action's steps default to running in
+`$GITHUB_WORKSPACE` — the untrusted PR checkout — and `python -m pip` (or
+`python -m` anything) prepends the current directory to `sys.path`, so a PR
+that drops a top-level `pip.py` or `agent_receipts/` would have *its* code
+imported before the trusted install even runs. The published action closes
+this by running both python invocations with `-I` (isolated mode: no CWD,
+no env on `sys.path`) from `RUNNER_TEMP`, never the workspace. The PR is
+handed to the gate only as data (`--repo-dir`); nothing in it is importable.
+`tests/test_workflow_security.py` proves the mechanism, not just the wiring:
+a `pip.py` dropped in the CWD runs under `python -m pip` and is inert under
+`python -I -m pip`.
+
 ## The trust anchor is only as protected as your base branch
 
 The gate reads `trusted_signers.yml` and `policy.yml` **only** from the PR's
@@ -146,11 +159,35 @@ and a bot holding a maintainer's PAT can label its own PR. The gate
 therefore honors a waiver only after confirming, via the GitHub API, that
 the label was applied by a user holding write, maintain, or admin on the
 repo. If it cannot prove who applied the label (no token, API failure), the
-waiver is refused — fail closed. Two hard limits, stated plainly: the
-waiver never bypasses the `.agent-receipts/**` tamper check (waiving
-verification is not approving a change to who is trusted), and a waiver
-applied *with* a compromised maintainer credential still passes — the waiver
-is an authenticated, audited bypass, not a review guarantee.
+waiver is refused — fail closed.
+
+"Who applied it" means the *current* application, not any application. The
+gate walks the PR's full label-event history (paginating to the end; if the
+history is so large it can't be exhausted, that too fails closed) and looks
+only at the single most recent `labeled`/`unlabeled` event for the waiver
+label. A maintainer who once applied the label and then removed it does not
+leave standing authority: if the latest event is an `unlabeled`, or a
+re-`labeled` by a lower-privileged actor, the waiver is refused. This closes
+the stale-label replay where a maintainer's old `labeled` event authenticates
+a later low-privilege relabel.
+
+Two hard limits, stated plainly: the waiver never bypasses the
+`.agent-receipts/**` tamper check (waiving verification is not approving a
+change to who is trusted), and a waiver applied *with* a compromised
+maintainer credential still passes — the waiver is an authenticated, audited
+bypass, not a review guarantee.
+
+## An armed gate demands an explicit policy
+
+Once a trust anchor exists on the base branch, the gate treats a missing or
+under-specified `policy.yml` as a failure, not a reason to relax. A missing
+policy does **not** fall back to built-in defaults, and a policy that never
+states `require_request_binding` is rejected rather than defaulting it to
+false. The reason is the failure mode this closes: a reverted, half-merged,
+or partially-corrupted policy would otherwise silently switch off request
+binding (the task-substitution defense) with no signal. Explicit-or-fail
+means a downgrade of that control can only happen as a visible, reviewable
+edit — never by omission.
 
 ## Known residual risks, stated plainly
 

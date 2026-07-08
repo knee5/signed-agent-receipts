@@ -1,0 +1,17 @@
+# signed-agent-receipts
+
+> Ed25519-signed, verifiable receipts for AI agent runs. Agents lie confidently; receipts don't. An agent emits a signed record of what it actually did (tool calls, file diffs, evidence, costs), attaches it to its PR, and anyone verifies it in one command — no server, no signup.
+
+Facts: Python 3.10+. PyPI package and CLI are both `signed-agent-receipts` (import package `agent_receipts`). Subcommands: normalize, render, dogfood, verify. Signing: Ed25519 over canonical JSON (`canonical-json-v1`), each JSONL record signed independently; private key auto-created at `~/.config/signed-agent-receipts/ed25519_private.pem` (override: `AGENT_RECEIPTS_SIGNING_KEY`). Record schema: `agent-run-ledger.v1`. Runtimes scanned: Claude Code (`~/.claude/projects`), Codex (`~/.codex`), Hermes (`~/.hermes`). Verification proves integrity and signing key, not work quality. Status: working v0.1, local-first, POC-grade normalizers.
+
+## For agents
+
+- [INSTALL-FOR-AGENTS.md](https://raw.githubusercontent.com/knee5/signed-agent-receipts/main/INSTALL-FOR-AGENTS.md): one-page self-install — emit a receipt, attach it to your PR, offer the CI gate
+- [AGENTS.md](https://raw.githubusercontent.com/knee5/signed-agent-receipts/main/AGENTS.md): full agent instructions, key handling rules, gate workflow YAML, contributor invariants
+
+## Reference
+
+- [README.md](https://raw.githubusercontent.com/knee5/signed-agent-receipts/main/README.md): human-facing overview and command reference
+- [schema/agent_run.schema.json](https://raw.githubusercontent.com/knee5/signed-agent-receipts/main/schema/agent_run.schema.json): receipt record schema (agent-run-ledger.v1)
+- [examples/receipts/run_example_0001.md](https://raw.githubusercontent.com/knee5/signed-agent-receipts/main/examples/receipts/run_example_0001.md): rendered Markdown receipt (synthetic)
+- [examples/agent_run.jsonl](https://raw.githubusercontent.com/knee5/signed-agent-receipts/main/examples/agent_run.jsonl): signed JSONL record (synthetic)

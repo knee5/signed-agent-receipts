@@ -51,6 +51,6 @@ No policy flags extracted.
 ## Signature
 - Algorithm: `ed25519`
 - Canonicalization: `canonical-json-v1`
-- Public key: `dn44IwjXc3pgPYh43kP+cACjaN3Y67DotVPff+wwFcM=`
-- Key ID: `sha256:7c09d609443f431c3acd9ac121d360f81bee6819ebd0caca7cc4f9d9163a4c3e`
-- Signature: `6wG4o7yKhRErtPC9IGt8sBXIf+Hc1B8IyGlkgCr8SPveXtTAsmuW28KtzYP8uosxvTqVgCkvb4LLKO9SIitGAQ==`
+- Public key: `OUnbBXjVzCpaKfq/aetifXC/UhMYJzKu8buHyJPLQVw=`
+- Key ID: `sha256:09772e2eb97eb241fd0ef5e43b4e4a143fdc1b2598ca9df331561e5b00c75798`
+- Signature: `HfMlNqDBMm3LMDG39RibePWMXkLgOXbDawZ+rb+5tqPCn+axQ4IdCUCC83aApzNi35EZrFq2/ZxEjpdbbeJ8Dw==`

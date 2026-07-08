@@ -25,8 +25,25 @@ in one command — an altered receipt fails loudly.
 What verification proves: the record hasn't changed since signing, and which
 key signed it. What it doesn't prove: that the work was good. That part is
 still your job — receipts just make sure you're reviewing what actually
-happened. This is a working v0.1: the signing and verification are real; the
-trace normalizers are POC-grade and say so below.
+happened. The signing and verification are real; the trace normalizers are
+POC-grade and say so below. The full honesty statement — what every layer
+does and does not prove — is [SECURITY-MODEL.md](SECURITY-MODEL.md).
+
+## The gate (v0.2)
+
+v0.2 adds the enforcement half: a **receipt that binds work to a PR** and a
+**GitHub Action that refuses to take its word for it**. The signed body binds
+the SHA-256 of the task the agent was given, the exact `git diff base...head`
+of the PR (the gate recomputes this hash independently — never the mutable PR
+body), and evidence typed by how the receiver can verify it: `re_executable`,
+`ci_attested`, `content_addressed`, or `self_claimed` (displayed, never
+counted). Trusted signers and the acceptance policy live in
+`.agent-receipts/` on your protected base branch; a PR cannot admit its own
+key. Every PR needs a receipt — the only bypass is a maintainer-applied
+`human-waiver` label. This repo runs its own gate.
+
+Install and operate: [docs/RECEIPTS-GATE.md](docs/RECEIPTS-GATE.md) ·
+Receipt schema: [schema/receipt.schema.json](schema/receipt.schema.json)
 
 ---
 

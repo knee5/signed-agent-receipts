@@ -12,5 +12,5 @@ jobs:
   python-ci:
     uses: knee5/.github/.github/workflows/python-ci.yml@db36f584df8b0638b85e3ac49b0dbf8702fb7516
     with:
-      install-command: python -m pip install -e .
+      install-command: python -m pip install -e ".[dev]"
       test-command: python -m unittest

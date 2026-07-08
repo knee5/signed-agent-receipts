@@ -19,6 +19,8 @@ on:
 permissions:
   contents: read
   checks: read
+  issues: read          # waiver verification: who applied the label
+  pull-requests: read
 
 jobs:
   receipts-gate:
@@ -27,13 +29,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0          # the gate recomputes diffs; it needs history
-      - uses: knee5/signed-agent-receipts@main   # pin a tag or SHA in production
+      - uses: knee5/signed-agent-receipts@<commit-sha>   # PIN a tag or SHA — see warning below
         with:
           github-token: ${{ github.token }}
 ```
 
 `labeled`/`unlabeled` matter: applying the waiver label re-runs the gate
 instead of leaving a stale failing check.
+
+**The gate must never execute from the PR it is judging.** Pinning a tag or
+SHA of this action gives you that: the action installs its own pinned copy,
+and the PR checkout is only the data being verified. What you must NOT do is
+run a local copy of the gate out of the PR checkout — `uses: ./`, or
+`pip install .` against the checked-out PR — because then any PR can rewrite
+the verifier and approve itself. If you vendor the gate in the same repo it
+guards (as this repo does), check out the base ref into a second directory
+and install from there; see this repo's own
+[receipts-gate.yml](../.github/workflows/receipts-gate.yml) and the wiring
+tests in `tests/test_workflow_security.py`.
 
 ## 2. Add the trust anchor and policy on your default branch
 
@@ -68,11 +81,25 @@ any PR touching `.agent-receipts/**`. For that to mean anything:
 
 1. **Branch protection** on your default branch, with `receipts-gate` as a
    **required status check**.
-2. **CODEOWNERS**: add `/.agent-receipts/ @your-maintainers` and require
+2. **CODEOWNERS**: cover `/.agent-receipts/` AND the paths that define what
+   the gate is — the verifier code, workflows, action, schema, and packaging
+   (see this repo's [CODEOWNERS](../.github/CODEOWNERS)) — and require
    code-owner review in branch protection.
 
-Config changes then land only via maintainer-reviewed PRs, merged with the
-waiver label (the gate's own failure on config PRs is by design).
+The waiver label does **not** bypass the config-tamper failure: waiving
+verification is not the same as approving a change to who is trusted.
+Config changes land via maintainer-reviewed PRs merged with a
+repo-settings-level bypass (branch-protection admin override), which GitHub
+audits. The gate's own failure on config PRs is by design.
+
+### The waiver, precisely
+
+A waiver is honored only when the gate can verify — via the GitHub API —
+that the `human-waiver` label was applied by a user with write, maintain, or
+admin permission on the repo. Label presence alone is never enough (any
+triage-capable token, including a bot's, can apply labels). If the applier
+cannot be identified or their permission cannot be confirmed, the gate says
+so and fails closed.
 
 ## 4. How agents attach receipts (sign-then-attach)
 
@@ -107,22 +134,34 @@ Evidence file example (`evidence.json`):
 ```
 
 `re_executable` runs only if the exact command string is in the policy's
-`re_executable_allowlist`. `self_claimed` is displayed, never counted.
+`re_executable_allowlist` — and it runs without a shell (the allowlisted
+string is argv-split; pipes and redirects are inert) in a working directory
+confined to the verification worktree. `self_claimed` is displayed, never
+counted.
 
-## 5. Request binding (optional, recommended for dispatched work)
+## 5. Request binding (how an issuer supplies the expected request)
 
-If the task the agent worked from is committed on the base branch (say
-`tasks/refactor-auth.md`), tell the gate:
+Without an issuer-held copy of the task, `request.hash` is reported but
+unchecked, and an agent that hashed a task it wrote for itself passes by
+construction. To close that, the ISSUER — someone with write access to the
+base branch — commits the exact task bytes there, and the workflow points
+the gate at them. The agent cannot supply its own "request": the file lives
+on the protected base, not in the PR.
+
+The per-PR convention this repo uses (`require_request_binding: true` in its
+policy): when dispatching work that lands as PR `N`, merge the task bytes to
+the base branch as `tasks/pr-N.md`, and let the workflow interpolate:
 
 ```yaml
-      - uses: knee5/signed-agent-receipts@main
-        with:
-          request-source-file: tasks/refactor-auth.md
+          request-source-file: tasks/pr-${{ github.event.pull_request.number }}.md
 ```
 
 The gate then requires `request.hash` to equal the SHA-256 of that file's
-bytes on the base branch. Alternatively pass `request-hash` directly. Without
-either input, the hash is reported but unchecked — see SECURITY-MODEL.md.
+bytes on the base branch. For a fixed task file, pass its path directly; for
+issuers who keep the task text private, pass `request-hash` with the
+`sha256:<hex>` instead. If the policy sets `require_request_binding: true`
+and no source reaches the gate (file missing on base included), receipts
+fail — human PRs without a task file go through the maintainer waiver.
 
 ## 6. The consumed-nonce ledger (replay dedup)
 
@@ -172,7 +211,13 @@ base.
 | `diff hash mismatch` | The delivered diff is not the diff that was signed. |
 | `STALE: signed head_sha is not an ancestor` | Force-push/rebase after signing. Re-emit. |
 | `commits after the signed head_sha touch non-receipt paths` | Work was added after signing. Re-emit. |
-| `PR modifies gate configuration` | `.agent-receipts/**` changed. Maintainer review + waiver label. |
+| `PR modifies gate configuration` | `.agent-receipts/**` changed. Maintainer review, then an admin merge via branch-protection bypass — the waiver label does not clear this. |
+| `waiver NOT honored` | The label is present but the gate could not confirm a write+ user applied it (self-applied, low permission, or no token/API access). |
+| `must attest the signed work, not another commit` | `ci_attested` evidence pointed at a sha other than the signed head. |
+| `cwd ... rejected` | `re_executable` tried to run outside the verification worktree. |
+| `policy requires request binding but the workflow provided no request source` | `require_request_binding: true` and no task file/hash reached the gate (missing `tasks/pr-N.md` on base included). |
 | `not in trusted_signers.yml` | Signer's key isn't pinned on the base branch. |
+| `trusted window ... expired` | The key's granted window has passed at verification time; rotate keys and re-pin. |
 | `replay rejected` | Nonce already in the consumed ledger. |
-| `NOT CONFIGURED` | No trust anchor on the base branch; bootstrap mode. |
+| `NOT CONFIGURED` | No trust anchor on the base branch; bootstrap mode (no expiry — arm it by merging the anchor). |
+| `half-configured` | `policy.yml` exists on base without `trusted_signers.yml`; fails closed instead of demoting to bootstrap. |

@@ -1,0 +1,68 @@
+{
+  "audience": "github:knee5/signed-agent-receipts",
+  "authorization": null,
+  "deliverable": {
+    "base_sha": "2f8a13f470872a8c5ffd5e61daf2068c5e933bfd",
+    "diff_hash": "sha256:8d3d9f9e02626aadb14b1f864c91141c203d12bd3d2b55131607b79813ff4e9d",
+    "head_sha": "a6e49d61a1d1dd1af37b5b5093caa8f9228bc9ab",
+    "pr_number": 3,
+    "repo": "knee5/signed-agent-receipts",
+    "type": "git_pr"
+  },
+  "evidence": [
+    {
+      "check_name": "Python CI (3.12)",
+      "description": "Full unittest suite (110 tests, incl. round-2 regressions: action isolation, waiver latest-event/pagination, policy fail-closed) at the signed head, run by GitHub Actions.",
+      "method": "ci_attested",
+      "provider": "github"
+    },
+    {
+      "cmd": "python -m unittest",
+      "description": "Re-run the full suite at the signed head; allowlisted in .agent-receipts/policy.yml, executed without a shell in a contained cwd.",
+      "expected_exit_code": 0,
+      "method": "re_executable"
+    },
+    {
+      "description": "The v0.2 receipt JSON Schema this receipt conforms to.",
+      "method": "content_addressed",
+      "path": "schema/receipt.schema.json",
+      "sha256": "sha256:7f0a4e4d6cab9688ad31627c9c3a640829b2ed8c1826725623e4d440f16116a3"
+    },
+    {
+      "claim": "Round-2 gpt-5.5 findings all closed: published action runs python -I from RUNNER_TEMP (pip.py CWD-hijack proven inert); waiver honors only the latest label event with full pagination + fail-closed cap; armed gate hard-fails missing/partial policy. Each fix mutation-checked against its test.",
+      "method": "self_claimed"
+    }
+  ],
+  "issued_at": "2026-07-08T14:03:54+00:00",
+  "judgment_calls": [
+    "Isolation: python -I from RUNNER_TEMP for BOTH pip install and the gate run, in the published action and the dogfood workflow. Chosen over installing a pinned wheel because action_path is trusted (the action pinned at the consumer's ref); the only hole was CWD module resolution, which -I closes. Proven by a real-subprocess pip.py test.",
+    "Waiver: authorize on the single most-recent labeled/unlabeled event (by id) for the waiver label, requiring latest==labeled by write/maintain/admin. Full pagination with a 100-page cap that fails closed if exceeded (event-flooding cannot bury the newest event).",
+    "Policy: an armed gate (anchor present) hard-fails a missing policy.yml and a policy that does not explicitly set require_request_binding. Other safe defaults are kept; only the one security-downgrading default is made explicit-or-fail.",
+    "Mutation-checked all four fixes via a file-backup restore (NOT git checkout — git checkout reverts uncommitted work, a footgun that bit round 2 mid-flight and was caught by re-running the suite before commit).",
+    "This PR is still judged in bootstrap mode by its own dogfood job: main carries no trust anchor yet, so trusted-gate/ has no gate.py and the job exits 0 with a NOT-CONFIGURED notice, executing nothing from the PR."
+  ],
+  "key": {
+    "key_id": "sha256:69ddf0429ee4d5224b69df5a025ca7a60dd0d825ea591e900f3ce3d56169374e",
+    "valid_from": "2026-07-08T04:54:54+00:00",
+    "valid_until": "2027-07-08T04:54:54+00:00"
+  },
+  "nonce": "d0b42e342e0cc6802d6b301137d30f21",
+  "purpose": "github-pr-gate",
+  "receipt_id": "rcpt_8e819d4fd92fbd37",
+  "request": {
+    "content_type": "text/plain; charset=utf-8",
+    "hash": "sha256:7818f57777c5d34122fb39d0521fd4737654dc14b7675403702ee475b5d1dcf4",
+    "preview": "Round-2: fix the 3 gpt-5.5 re-review findings still open — (CRITICAL) shipped action python not isolated from the PR workspace (pip.py hijack); (HIGH #5) waiver stale-label/pagination; (MEDIUM #8) missing/partial policy silently disables request binding. Add regression tests; keep docs honest; re-sign.",
+    "source": "Round-2 re-review message from team lead (CC), 2026-07-08; 3 still-open findings; exact bytes retained by issuer and build agent"
+  },
+  "run_refs": [],
+  "schema_version": "agent-receipt.v0.2",
+  "signature": {
+    "algorithm": "ed25519",
+    "canonicalization": "canonical-json-v1",
+    "key_id": "sha256:69ddf0429ee4d5224b69df5a025ca7a60dd0d825ea591e900f3ce3d56169374e",
+    "public_key": "Gwyi/jRahYg2XAQj3QMLJ8ewn0BBD7mJ4rkLZnvvxOE=",
+    "value": "JI5vJHJwGOX38OWENg6Y2jSBlXJWLP0QcTSrVvTQodZ84a7SOK5MSffIl263k4/kcefk0w0Sh4Vxy0AgI8EpBw=="
+  },
+  "signers": []
+}

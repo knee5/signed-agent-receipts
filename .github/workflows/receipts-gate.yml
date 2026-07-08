@@ -1,0 +1,64 @@
+# Dogfood: this repo runs its own receipts-gate on every PR.
+#
+# THE ONE RULE OF THIS FILE: the gate executes from the TRUSTED base branch,
+# never from the PR. `uses: ./` after checking out PR content would run the
+# PR's own copy of gate.py — any PR could rewrite the verifier to say yes.
+# So the PR checkout below is pure DATA (the thing being verified), and the
+# code that verifies it is installed from a second checkout of the base ref.
+# External consumers get the same property by pinning a released tag/SHA of
+# this action (see docs/RECEIPTS-GATE.md).
+#
+# labeled/unlabeled are included so applying the human-waiver label re-runs
+# the gate instead of leaving a stale failing check.
+name: receipts-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  checks: read
+  # The gate verifies WHO applied a waiver label (issue events + collaborator
+  # permission lookups).
+  issues: read
+  pull-requests: read
+
+jobs:
+  receipts-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out PR (UNTRUSTED — data under verification, never executed)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the gate recomputes diffs; it needs history
+          path: pr
+      - name: Check out trusted verifier from the base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: trusted-gate
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run receipts gate from the trusted copy
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_GATE: ${{ github.workspace }}/trusted-gate
+        # -I (isolated) + a run from RUNNER_TEMP so neither pip nor the gate
+        # can import code from CWD. Belt-and-suspenders on top of the pr/ vs
+        # trusted-gate/ split: the PR reaches the gate only via --repo-dir.
+        working-directory: ${{ runner.temp }}
+        run: |
+          if [ ! -f "$TRUSTED_GATE/agent_receipts/gate.py" ]; then
+            echo "::warning::receipts-gate is not on the base branch yet (bootstrap). Nothing was enforced," \
+                 "and nothing from the PR was executed. Merging the gate to the base branch arms it."
+            exit 0
+          fi
+          python -I -m pip install --isolated --quiet "$TRUSTED_GATE"
+          python -I -m agent_receipts gate \
+            --event "$GITHUB_EVENT_PATH" \
+            --repo-dir "$GITHUB_WORKSPACE/pr" \
+            --request-source-file "tasks/pr-${PR_NUMBER}.md"

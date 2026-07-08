@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "signed-agent-receipts"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local agent run receipts with signed JSONL records and Markdown review artifacts."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,6 +14,12 @@ authors = [
 ]
 dependencies = [
   "cryptography>=42",
+  "PyYAML>=6",
+]
+
+[project.optional-dependencies]
+dev = [
+  "jsonschema>=4",
 ]
 
 [project.scripts]

@@ -1,0 +1,72 @@
+name: receipts-gate
+description: >-
+  Require a signed agent receipt on every pull request: verifies the Ed25519
+  signature, checks the signer against trusted_signers.yml on the protected
+  base branch, independently recomputes the PR diff hash, verifies typed
+  evidence, and applies the repo's acceptance policy. The only bypass is a
+  maintainer-applied waiver label.
+author: knee5
+branding:
+  icon: check-square
+  color: green
+
+inputs:
+  github-token:
+    description: Token used to fetch check runs for ci_attested evidence.
+    required: false
+    default: ${{ github.token }}
+  request-source-file:
+    description: >-
+      Path (on the BASE branch) to a file holding the exact bytes of the task
+      that was issued to the agent. When set, the gate requires the receipt's
+      request.hash to match this file. Leave empty if the issuer verifies the
+      request hash out of band.
+    required: false
+    default: ""
+  request-hash:
+    description: >-
+      Expected sha256:<hex> of the issued request, for issuers who do not want
+      to commit the request text. Overrides nothing; mutually exclusive with
+      request-source-file.
+    required: false
+    default: ""
+  python-version:
+    description: Python version used to run the gate.
+    required: false
+    default: "3.12"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+    # Both python steps run in isolated mode (-I) from a neutral directory,
+    # NEVER the PR checkout. A composite action's default working-directory is
+    # $GITHUB_WORKSPACE — the untrusted PR — and `python -m pip` there resolves
+    # a top-level `pip.py`/`pip/` dropped by the PR before the real pip. -I
+    # drops CWD (and env) from sys.path, and RUNNER_TEMP holds no attacker
+    # files, so neither the installer nor the gate can import workspace code.
+    # The PR reaches the gate only as DATA via --repo-dir. The action installs
+    # from github.action_path, which is this action pinned at the ref the
+    # consumer selected (pin a tag/SHA), not the PR.
+    - name: Install receipts gate (isolated from the PR workspace)
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      run: python -I -m pip install --isolated --quiet "${{ github.action_path }}"
+    - name: Run receipts gate (isolated; PR workspace is data, never importable)
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        REQUEST_SOURCE_FILE: ${{ inputs.request-source-file }}
+        REQUEST_HASH: ${{ inputs.request-hash }}
+      run: |
+        args=(gate --event "$GITHUB_EVENT_PATH" --repo-dir "$GITHUB_WORKSPACE")
+        if [ -n "$REQUEST_SOURCE_FILE" ]; then
+          args+=(--request-source-file "$REQUEST_SOURCE_FILE")
+        fi
+        if [ -n "$REQUEST_HASH" ]; then
+          args+=(--request-hash "$REQUEST_HASH")
+        fi
+        python -I -m agent_receipts "${args[@]}"

@@ -40,7 +40,9 @@ body), and evidence typed by how the receiver can verify it: `re_executable`,
 counted). Trusted signers and the acceptance policy live in
 `.agent-receipts/` on your protected base branch; a PR cannot admit its own
 key. Every PR needs a receipt — the only bypass is a maintainer-applied
-`human-waiver` label. This repo runs its own gate.
+`human-waiver` label. This repo runs its own gate — see it live in
+[docs/DEMO.md](docs/DEMO.md): three open demo PRs, one green, two red, each
+for the right reason.
 
 Install and operate: [docs/RECEIPTS-GATE.md](docs/RECEIPTS-GATE.md) ·
 Receipt schema: [schema/receipt.schema.json](schema/receipt.schema.json)

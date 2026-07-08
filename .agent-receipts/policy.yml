@@ -15,12 +15,18 @@ settings:
   # If a PR modifies workflow files, a green check attests whatever the
   # modified workflow does — so CI attestations are discounted for that PR.
   distrust_ci_when_workflows_change: true
-  # Request binding needs the gate to know the issued task (see the action's
-  # request-source-file input). Off until this repo commits task files.
-  require_request_binding: false
+  # Receipts must be bound to the task the ISSUER dispatched, or an agent can
+  # solve an easier task than asked and sign a self-consistent receipt. The
+  # issuer commits the exact task bytes to tasks/pr-<N>.md on the base branch
+  # (a write-access act — the agent cannot supply its own "request"); the
+  # workflow points the gate at that file per PR. Human PRs without a task
+  # file use the maintainer waiver.
+  require_request_binding: true
   # The ONLY commands the gate will ever execute from a receipt. Receipts are
   # signed, not trusted; execution rights come from this file, on the base
-  # branch, under maintainer review.
+  # branch, under maintainer review. Entries are exact strings, executed
+  # WITHOUT a shell (argv-split): pipes, redirects, and substitutions do not
+  # work here, by design.
   re_executable_allowlist:
     - "python -m unittest"
 

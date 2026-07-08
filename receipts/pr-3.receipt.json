@@ -1,0 +1,67 @@
+{
+  "audience": "github:knee5/signed-agent-receipts",
+  "authorization": null,
+  "deliverable": {
+    "base_sha": "2f8a13f470872a8c5ffd5e61daf2068c5e933bfd",
+    "diff_hash": "sha256:6a51fabbd534083e85abced6a383637233514af74606eb1116ab4dfa2348ccd1",
+    "head_sha": "f972ab427657924ad91bfdf63b70094f045ffb84",
+    "pr_number": 3,
+    "repo": "knee5/signed-agent-receipts",
+    "type": "git_pr"
+  },
+  "evidence": [
+    {
+      "check_name": "Python CI (3.12)",
+      "description": "Full unittest suite (79 tests) on the signed work head, run by GitHub Actions.",
+      "method": "ci_attested",
+      "provider": "github"
+    },
+    {
+      "cmd": "python -m unittest",
+      "description": "Re-run the full test suite at the signed head; allowlisted in .agent-receipts/policy.yml.",
+      "expected_exit_code": 0,
+      "method": "re_executable"
+    },
+    {
+      "description": "The v0.2 receipt JSON Schema this receipt itself conforms to.",
+      "method": "content_addressed",
+      "path": "schema/receipt.schema.json",
+      "sha256": "sha256:8f05d4e07069c2fe832bfdeec0ed6c933cf5878bfb12ff56c19ee920dd5d8663"
+    },
+    {
+      "claim": "SECURITY-MODEL.md and docs/RECEIPTS-GATE.md were written to describe exactly the implemented gate behavior, no more.",
+      "method": "self_claimed"
+    }
+  ],
+  "issued_at": "2026-07-08T05:04:16+00:00",
+  "judgment_calls": [
+    "Bootstrap mode: gate passes loudly when the base branch has no trust anchor, so adoption PRs are not bricked; tamper rule still applies once configured.",
+    "Inlined ci.yml in this PR: CI was failing repo-wide (public repo calling a private reusable workflow) since before this branch; a trust product cannot ship with broken CI.",
+    "Consumed-nonce ledger is check-only in this repo; no bot commits to main (linear-history policy). consume subcommand + docs provided.",
+    "v0.2 not yet published to PyPI; AGENTS.md says install from git for v0.2 commands."
+  ],
+  "key": {
+    "key_id": "sha256:69ddf0429ee4d5224b69df5a025ca7a60dd0d825ea591e900f3ce3d56169374e",
+    "valid_from": "2026-07-08T04:54:54+00:00",
+    "valid_until": "2027-07-08T04:54:54+00:00"
+  },
+  "nonce": "ddbb638f3b86a6fe4a7dd1ce0d98ce8a",
+  "purpose": "github-pr-gate",
+  "receipt_id": "rcpt_24db55b43b894fe6",
+  "request": {
+    "content_type": "text/plain; charset=utf-8",
+    "hash": "sha256:610e43e35a25498f05d570073f0793be199a4bd106112c1148cbd44840b2e46e",
+    "preview": "Implement the v2 core per plan-a2a-trust-v2-2026-07-08: receipt schema v0.2 (request+deliverable binding, typed evidence, key lifecycle, reserved sockets), receipts-gate action with base-branch trust anchor + human-waiver, acceptance policy file, consumed-nonce ledger, honesty docs, CLAUDE.md fix; test everything; dogfood the PR.",
+    "source": "Task message from team lead (CC), 2026-07-08; exact bytes retained by issuer and build agent"
+  },
+  "run_refs": [],
+  "schema_version": "agent-receipt.v0.2",
+  "signature": {
+    "algorithm": "ed25519",
+    "canonicalization": "canonical-json-v1",
+    "key_id": "sha256:69ddf0429ee4d5224b69df5a025ca7a60dd0d825ea591e900f3ce3d56169374e",
+    "public_key": "Gwyi/jRahYg2XAQj3QMLJ8ewn0BBD7mJ4rkLZnvvxOE=",
+    "value": "IW3xgp3rDiH75T8J2MALiRdc+5r9g/m45QnCco2awHV+21Rm5vlsnYIlhj82YN9VA9nwC7j8jLwZrfnV1ElYCQ=="
+  },
+  "signers": []
+}

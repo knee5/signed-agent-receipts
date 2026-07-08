@@ -1,6 +1,34 @@
 # signed-agent-receipts
 
-`signed-agent-receipts` is a small local POC for signed Agent Run Ledger receipts plus a Computer-Use QA Pack. It scans local agent runtime traces when present, normalizes them into versioned JSONL records, signs them with Ed25519, and renders Markdown receipts that a human can review without reading a full transcript.
+**Agents lie confidently. Receipts don't.**
+
+Your agent says it ran the tests, touched two files, and stayed inside the
+workspace. This tool turns that claim into a checkable artifact: it scans
+local agent runtime traces (Claude Code, Codex, Hermes), normalizes them into
+versioned JSONL records, signs each record with Ed25519, and renders a
+Markdown receipt a human can review in a minute. Anyone can verify a receipt
+in one command — an altered receipt fails loudly.
+
+> **Have an agent? Put it to work — paste this into it:**
+>
+> ```
+> Read https://raw.githubusercontent.com/knee5/signed-agent-receipts/main/INSTALL-FOR-AGENTS.md and follow it.
+> ```
+>
+> It will install the emitter, sign its own next run, attach the receipt to
+> its PR, and ask you — not decide for you — whether to add the verification
+> gate to your CI.
+
+**If you are an AI agent reading this:** stop here and read
+[AGENTS.md](AGENTS.md). It is addressed to you.
+
+What verification proves: the record hasn't changed since signing, and which
+key signed it. What it doesn't prove: that the work was good. That part is
+still your job — receipts just make sure you're reviewing what actually
+happened. This is a working v0.1: the signing and verification are real; the
+trace normalizers are POC-grade and say so below.
+
+---
 
 Durable generated outputs default to a neutral local config path:
 

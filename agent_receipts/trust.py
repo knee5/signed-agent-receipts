@@ -26,6 +26,10 @@ from .signing import SIGNATURE_FIELD
 
 TRUSTED_SIGNERS_PATH = ".agent-receipts/trusted_signers.yml"
 
+# Tolerance for clock disagreement between signer and verifier when checking
+# that issued_at is not in the verifier's future.
+MAX_CLOCK_SKEW = _dt.timedelta(minutes=5)
+
 
 class TrustConfigError(ValueError):
     """trusted_signers.yml is malformed. The gate fails CLOSED on this."""
@@ -109,15 +113,19 @@ def _parse_optional_dt(entry: dict[str, Any], key: str, index: int) -> _dt.datet
     return parsed
 
 
-def check_signer(anchor: TrustAnchor, receipt: dict[str, Any]) -> list[str]:
+def check_signer(anchor: TrustAnchor, receipt: dict[str, Any], *, now: _dt.datetime | None = None) -> list[str]:
     """Trust checks for a structurally-valid, signature-verified receipt.
     Returns problems; empty means the signer is trusted for this receipt.
 
     issued_at is self-asserted by the signer. Enforcing validity windows
     against it bounds what a STOLEN-BUT-HONESTLY-TIMESTAMPED key can do; a
-    forger who also lies about issued_at defeats the window check. That limit
-    is documented in SECURITY-MODEL.md — do not present windows as stronger
-    than they are.
+    forger who also lies about issued_at defeats the window check. Two checks
+    therefore use the VERIFIER's clock and cannot be defeated by a lying
+    signer: issued_at must not be in the verifier's future (beyond skew), and
+    a key whose trusted window has expired verifies nothing, regardless of
+    what the receipt claims about when it was issued. The remaining limit —
+    a backdated issued_at inside a still-valid window — is documented in
+    SECURITY-MODEL.md; do not present windows as stronger than they are.
     """
     problems: list[str] = []
     signature = receipt.get(SIGNATURE_FIELD) or {}
@@ -142,6 +150,18 @@ def check_signer(anchor: TrustAnchor, receipt: dict[str, Any]) -> list[str]:
     if issued_at is None:
         problems.append("issued_at is not a parseable ISO-8601 datetime")
         return problems
+
+    verifier_now = now or _dt.datetime.now(_dt.timezone.utc)
+    if issued_at > verifier_now + MAX_CLOCK_SKEW:
+        problems.append(
+            f"receipt issued_at {receipt['issued_at']} is in the verifier's future "
+            f"(now {verifier_now.isoformat()}): forward-dated receipts are rejected"
+        )
+    if signer.valid_until and verifier_now > signer.valid_until:
+        problems.append(
+            f"trusted window for '{signer.name}' expired at {signer.valid_until.isoformat()} (verifier clock): "
+            "an expired key verifies nothing, regardless of the receipt's claimed issued_at"
+        )
 
     if signer.valid_from and issued_at < signer.valid_from:
         problems.append(f"receipt issued_at {receipt['issued_at']} predates trusted window for '{signer.name}'")

@@ -1,3 +1,4 @@
+import datetime as dt
 import tempfile
 import unittest
 from pathlib import Path
@@ -90,6 +91,43 @@ class TrustTests(unittest.TestCase):
         receipt = _receipt(self.key_path, issued_at="2019-06-01T00:00:00+00:00")
         problems = check_signer(anchor, receipt)
         self.assertTrue(any("claimed valid_from" in p for p in problems))
+
+    def test_expired_trusted_window_rejected_at_verifier_time(self):
+        # issued_at is the SIGNER's claim. A stolen key whose trusted window
+        # has expired must not pass by backdating issued_at into the window:
+        # the expiry check runs against the verifier's clock.
+        anchor = parse_trusted_signers(
+            _anchor_yaml(
+                self.key_id,
+                self.public_key,
+                valid_from="2019-01-01T00:00:00+00:00",
+                valid_until="2019-12-31T00:00:00+00:00",
+            )
+        )
+        receipt = _receipt(self.key_path, issued_at="2019-06-01T00:00:00+00:00")
+        problems = check_signer(anchor, receipt)
+        self.assertTrue(any("expired" in p for p in problems), problems)
+
+    def test_expiry_uses_injected_verifier_clock(self):
+        anchor = parse_trusted_signers(
+            _anchor_yaml(
+                self.key_id,
+                self.public_key,
+                valid_until="2030-01-01T00:00:00+00:00",
+            )
+        )
+        receipt = _receipt(self.key_path)
+        self.assertEqual(check_signer(anchor, receipt), [])
+        future = dt.datetime(2031, 1, 1, tzinfo=dt.timezone.utc)
+        problems = check_signer(anchor, receipt, now=future)
+        self.assertTrue(any("expired" in p for p in problems), problems)
+
+    def test_forward_dated_issued_at_rejected(self):
+        anchor = parse_trusted_signers(_anchor_yaml(self.key_id, self.public_key))
+        future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=2)).replace(microsecond=0)
+        receipt = _receipt(self.key_path, issued_at=future.isoformat())
+        problems = check_signer(anchor, receipt)
+        self.assertTrue(any("verifier's future" in p for p in problems), problems)
 
     def test_malformed_yaml_fails_closed(self):
         with self.assertRaises(TrustConfigError):

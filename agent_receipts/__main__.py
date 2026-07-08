@@ -289,14 +289,19 @@ def _cmd_gate(args: argparse.Namespace) -> int:
             base_tip = rev_parse(ctx.repo_dir, ctx.base_rev)
             blob = file_bytes_at(ctx.repo_dir, base_tip, args.request_source_file)
             if blob is None:
+                # Not a hard error: the gate must still run so the waiver path
+                # and the policy's require_request_binding produce the verdict.
+                # (A hard exit here would fail waived PRs before the waiver is
+                # even considered.) The file must live on the protected base,
+                # not the PR — a PR-supplied request would bind nothing.
                 print(
-                    f"error: request-source-file {args.request_source_file!r} not found on base branch "
-                    f"{ctx.base_ref} (it must live on the protected base, not the PR)",
+                    f"warning: request-source-file {args.request_source_file!r} not found on base branch "
+                    f"{ctx.base_ref}; gate runs with no issuer request source (policy decides if that fails)",
                     file=sys.stderr,
                 )
-                return 1
-            ctx.request_hash_expected = hash_bytes(blob)
-            ctx.request_source_desc = f"{args.request_source_file} @ {ctx.base_ref}"
+            else:
+                ctx.request_hash_expected = hash_bytes(blob)
+                ctx.request_source_desc = f"{args.request_source_file} @ {ctx.base_ref}"
     except (ValueError, GitError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

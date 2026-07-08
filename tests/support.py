@@ -9,7 +9,7 @@ from pathlib import Path
 
 from agent_receipts.gitdiff import canonical_diff_hash, rev_parse
 from agent_receipts.receipt import build_receipt, hash_request_text, write_receipt
-from agent_receipts.signing import public_key_material
+from agent_receipts.signing import SIGNATURE_FIELD, public_key_material, sign_record
 
 REPO_NAME = "demo/fixture-repo"
 REQUEST_TEXT = "Refactor src/app.py to greet by name, per issue #12."
@@ -71,6 +71,7 @@ def make_fixture(
     *,
     with_trust_anchor: bool = True,
     with_policy: bool = True,
+    policy_text: str | None = None,
     consumed_lines: list[str] | None = None,
 ) -> RepoFixture:
     key_path = tmp / "keys" / "agent.pem"
@@ -87,17 +88,18 @@ def make_fixture(
     (repo / "src" / "app.py").write_text("def greet():\n    return 'hello'\n", encoding="utf-8")
     (repo / "docs").mkdir()
     (repo / "docs" / "guide.md").write_text("# Guide\n", encoding="utf-8")
-    if with_trust_anchor:
+    if with_trust_anchor or with_policy or consumed_lines:
         (repo / ".agent-receipts").mkdir()
+    if with_trust_anchor:
         (repo / ".agent-receipts" / "trusted_signers.yml").write_text(
             TRUSTED_SIGNERS_TEMPLATE.format(key_id=key_id, public_key=public_key), encoding="utf-8"
         )
-        if with_policy:
-            (repo / ".agent-receipts" / "policy.yml").write_text(POLICY_YML, encoding="utf-8")
-        if consumed_lines:
-            (repo / ".agent-receipts" / "consumed.jsonl").write_text(
-                "".join(line + "\n" for line in consumed_lines), encoding="utf-8"
-            )
+    if with_policy:
+        (repo / ".agent-receipts" / "policy.yml").write_text(policy_text or POLICY_YML, encoding="utf-8")
+    if consumed_lines:
+        (repo / ".agent-receipts" / "consumed.jsonl").write_text(
+            "".join(line + "\n" for line in consumed_lines), encoding="utf-8"
+        )
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "base")
 
@@ -147,5 +149,32 @@ def emit_and_attach_receipt(
     return receipt
 
 
+def resign_and_attach(fixture: RepoFixture, receipt: dict, *, pr_number: int = 7, key_path: Path | None = None) -> dict:
+    """Re-sign a (possibly structurally invalid) receipt body and commit it.
+    Simulates a malicious emitter: custom tooling, but a REAL signature from a
+    trusted key — the gate must reject on content, not on signature."""
+    receipt.pop(SIGNATURE_FIELD, None)
+    receipt = sign_record(receipt, key_path=key_path or fixture.key_path)
+    write_receipt(receipt, fixture.repo_dir / "receipts" / f"pr-{pr_number}.receipt.json")
+    git(fixture.repo_dir, "add", "receipts")
+    git(fixture.repo_dir, "commit", "-qm", "attach receipt")
+    fixture.pr_head = rev_parse(fixture.repo_dir, "HEAD")
+    return receipt
+
+
 def passing_check_runs(repo: str, sha: str) -> list[dict]:
-    return [{"id": 11, "name": "python-ci", "status": "completed", "conclusion": "success"}]
+    # Mirrors the real API: check runs carry the head_sha they ran against,
+    # and the gate refuses runs whose head_sha is not the signed head.
+    return [{"id": 11, "name": "python-ci", "status": "completed", "conclusion": "success", "head_sha": sha}]
+
+
+def waiver_label_events(label: str, actor: str):
+    """Fetcher stub: the waiver label was applied by `actor`."""
+    return lambda repo, pr_number: [
+        {"event": "labeled", "label": {"name": label}, "actor": {"login": actor}}
+    ]
+
+
+def permission_map(mapping: dict[str, str]):
+    """Fetcher stub: repo permission per login; unknown users have none."""
+    return lambda repo, login: mapping.get(login, "none")

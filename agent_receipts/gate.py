@@ -13,17 +13,28 @@ Two distinct stages, kept distinct on purpose:
 
 Security posture notes, mirrored in SECURITY-MODEL.md:
 
+- The gate itself must execute from a TRUSTED ref (the base branch, or a
+  pinned release of this action) — never from the PR's own working copy. A
+  PR that can rewrite its verifier passes trivially. This module cannot
+  enforce where it was loaded from; the workflow wiring must (see
+  .github/workflows/receipts-gate.yml and docs/RECEIPTS-GATE.md).
 - Trust anchor and policy are read ONLY from the PR's base branch. A PR that
-  touches `.agent-receipts/**` fails until a maintainer reviews it (waiver
-  label or maintainer-authored config PR).
+  touches `.agent-receipts/**` fails, and the waiver label does NOT bypass
+  that failure — config changes land only through a repo-settings-level
+  bypass by an admin, which GitHub audits.
 - The gate covers ALL PRs, not "agent PRs": an agent pushing under a human's
   token is indistinguishable from the human, so scoping by author would be
-  decorative. The only bypass is the maintainer-applied waiver label —
-  GitHub only lets users with triage+ permission apply labels.
+  decorative. The only bypass is the waiver label, honored only after the
+  gate confirms via the GitHub API that it was applied by a user holding
+  write/maintain/admin — label presence alone proves nothing, because any
+  token with triage rights (including a bot's) can apply labels.
 - re_executable evidence is executed only if the exact command string is
-  allowlisted in the base-branch policy. Receipts are signed but NOT trusted
+  allowlisted in the base-branch policy, without a shell, in a cwd contained
+  inside the verification worktree. Receipts are signed but NOT trusted
   content; executing arbitrary receipt-supplied commands would hand CI
   execution to any trusted signer's compromised key.
+- ci_attested evidence is accepted only for the signed head_sha. A receipt
+  cannot point the gate at some other (green) commit.
 - head_sha binding allows trailing commits that touch only `receipts/**`,
   because attaching the receipt necessarily creates a commit after signing.
 """
@@ -33,15 +44,22 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
+
+try:
+    import fcntl
+except ImportError:  # non-POSIX; ledger writes fall back to best-effort (see consume_receipt)
+    fcntl = None  # type: ignore[assignment]
 
 from .gitdiff import (
     GitError,
@@ -70,7 +88,14 @@ RECEIPTS_DIR = "receipts"
 MAX_RECEIPT_BYTES = 1_000_000
 RE_EXECUTABLE_TIMEOUT_SECONDS = 600
 
+# Repo permissions whose holder may waive the gate. GitHub lets triage+ apply
+# labels, but triage is a housekeeping grant, not a merge authority — the
+# waiver requires the same level of trust as pushing code.
+WAIVER_PERMISSIONS = frozenset({"admin", "maintain", "write"})
+
 CheckRunsFetcher = Callable[[str, str], list[dict]]
+LabelEventsFetcher = Callable[[str, int], list[dict]]
+PermissionFetcher = Callable[[str, str], "str | None"]
 
 
 @dataclass
@@ -86,6 +111,8 @@ class GateContext:
     request_hash_expected: str | None = None
     request_source_desc: str | None = None
     check_runs_fetcher: CheckRunsFetcher | None = None
+    label_events_fetcher: LabelEventsFetcher | None = None
+    permission_fetcher: PermissionFetcher | None = None
 
     def __post_init__(self) -> None:
         self.repo_dir = Path(self.repo_dir)
@@ -173,6 +200,13 @@ def run_gate(ctx: GateContext) -> GateReport:
     policy_bytes = file_bytes_at(ctx.repo_dir, base_tip, POLICY_PATH)
 
     if trusted_bytes is None:
+        if policy_bytes is not None:
+            report.fail(
+                f"{POLICY_PATH} exists on base branch '{ctx.base_ref}' but {TRUSTED_SIGNERS_PATH} does not. "
+                "A policy without a trust anchor is a half-configured gate — someone armed it and someone "
+                "(or something) disarmed the anchor. Failing closed instead of dropping to bootstrap mode."
+            )
+            return report
         return _bootstrap_report(ctx, report)
 
     try:
@@ -191,29 +225,34 @@ def run_gate(ctx: GateContext) -> GateReport:
             report.fail(f"policy.yml on base branch is malformed (failing closed): {exc}")
             return report
 
-    if policy.settings.waiver_label in ctx.labels:
-        report.waived = True
-        report.warn(
-            f"WAIVED: '{policy.settings.waiver_label}' label is present. No receipt was verified for this PR. "
-            "GitHub only allows users with triage permission or higher to apply labels; this waiver is the "
-            "audit trail that a human took responsibility for this merge."
-        )
-        return report
-
     try:
         pr_changed = changed_paths(ctx.repo_dir, base_tip, ctx.pr_head_sha)
     except GitError as exc:
         report.fail(f"cannot compute PR changed paths: {exc}")
         return report
 
+    # The config-tamper check comes BEFORE the waiver on purpose: a waiver must
+    # never be able to smuggle in a trust-anchor or policy change.
     config_touched = sorted(p for p in pr_changed if p == ".agent-receipts" or p.startswith(".agent-receipts/"))
     if config_touched:
         report.fail(
             "PR modifies gate configuration: " + ", ".join(config_touched) + ". "
             "Trust anchor and policy changes require maintainer review — a PR must not be able to admit its own "
-            "signing key. A maintainer can merge this by applying the waiver label after review."
+            "signing key. The waiver label does NOT bypass this check; landing a config change requires a "
+            "repo-settings-level bypass by an admin (which GitHub audits). See docs/RECEIPTS-GATE.md."
         )
         return report
+
+    if policy.settings.waiver_label in ctx.labels:
+        if _waiver_authorized(ctx, report, policy.settings.waiver_label):
+            report.waived = True
+            report.warn(
+                f"WAIVED: '{policy.settings.waiver_label}' label applied by a verified maintainer. No receipt "
+                "was verified for this PR; the waiver is the audit trail that a human took responsibility for "
+                "this merge."
+            )
+            return report
+        # Waiver not honored (reasons reported above); continue and require a receipt.
 
     candidates = _discover_receipts(ctx, report)
     if not candidates:
@@ -238,13 +277,76 @@ def run_gate(ctx: GateContext) -> GateReport:
     return report
 
 
+def _waiver_authorized(ctx: GateContext, report: GateReport, waiver_label: str) -> bool:
+    """Label presence alone is not a waiver: any token with triage rights —
+    including a bot holding a maintainer's PAT and labeling its own PR — can
+    apply labels. The gate honors the waiver only after confirming via the
+    GitHub API that the label was applied by a user holding write, maintain,
+    or admin on this repo. Anything it cannot prove, it refuses (fail closed);
+    the report lines say exactly what was missing."""
+    events_fetcher = ctx.label_events_fetcher
+    permission_fetcher = ctx.permission_fetcher
+    if events_fetcher is None or permission_fetcher is None:
+        if not ctx.token:
+            report.warn(
+                f"waiver label '{waiver_label}' is present but the gate has no GitHub token to verify who "
+                "applied it — waiver NOT honored (fail closed). A label whose applier cannot be identified "
+                "is indistinguishable from a self-applied bypass."
+            )
+            return False
+        token = ctx.token
+        if events_fetcher is None:
+            events_fetcher = lambda repo, pr: _github_issue_events(repo, pr, token)  # noqa: E731
+        if permission_fetcher is None:
+            permission_fetcher = lambda repo, login: _github_permission(repo, login, token)  # noqa: E731
+
+    try:
+        events = events_fetcher(ctx.repo, ctx.pr_number)
+    except (urllib.error.URLError, ValueError, KeyError) as exc:
+        report.warn(f"waiver label '{waiver_label}': cannot fetch label events ({exc}) — waiver NOT honored (fail closed)")
+        return False
+
+    applier: str | None = None
+    for event in events:
+        if not isinstance(event, dict) or event.get("event") != "labeled":
+            continue
+        if (event.get("label") or {}).get("name") == waiver_label:
+            applier = (event.get("actor") or {}).get("login")
+    if not applier:
+        report.warn(
+            f"waiver label '{waiver_label}': no 'labeled' event with an identifiable actor found for this PR "
+            "— waiver NOT honored (fail closed)"
+        )
+        return False
+
+    try:
+        permission = permission_fetcher(ctx.repo, applier)
+    except (urllib.error.URLError, ValueError, KeyError) as exc:
+        report.warn(
+            f"waiver label '{waiver_label}': cannot verify repo permission of applier '{applier}' ({exc}) "
+            "— waiver NOT honored (fail closed)"
+        )
+        return False
+    if permission not in WAIVER_PERMISSIONS:
+        report.warn(
+            f"waiver label '{waiver_label}' was applied by '{applier}' whose repo permission is "
+            f"{permission!r}; a waiver requires {sorted(WAIVER_PERMISSIONS)} — NOT honored"
+        )
+        return False
+
+    report.ok(f"waiver label '{waiver_label}' applied by '{applier}' (verified repo permission: {permission})")
+    return True
+
+
 def _bootstrap_report(ctx: GateContext, report: GateReport) -> GateReport:
     report.bootstrap = True
     report.warn(
         f"NOT CONFIGURED: {TRUSTED_SIGNERS_PATH} does not exist on branch '{ctx.base_ref}'. "
         "The gate anchors trust in that file on the protected base branch and cannot enforce anything without it. "
         "Passing with this notice so adoption/bootstrap PRs are not blocked. To arm the gate, merge a "
-        "trusted_signers.yml + policy.yml to the base branch (see docs/RECEIPTS-GATE.md)."
+        "trusted_signers.yml + policy.yml to the base branch (see docs/RECEIPTS-GATE.md). "
+        "Bootstrap mode has NO expiry: until the anchor is merged, every PR passes with this notice, "
+        "and only this notice distinguishes an armed repo from an unarmed one."
     )
     for path, receipt_doc in _discover_receipts(ctx, report):
         result = verify_record(receipt_doc)
@@ -481,7 +583,17 @@ def _verify_evidence(
 
 
 def _verify_ci_attested(ctx: GateContext, item: dict, signed_head: str) -> tuple[bool, str]:
-    sha = item.get("sha") or signed_head
+    # The receipt does not get to choose which commit CI attests. A receipt-
+    # supplied `sha` is accepted only as a redundant statement of the signed
+    # head; anything else is an attempt to borrow a green check from an
+    # unrelated commit.
+    claimed_sha = item.get("sha")
+    if claimed_sha and claimed_sha != signed_head:
+        return False, (
+            f"evidence pins sha {claimed_sha[:12]} but the signed head is {signed_head[:12]} — "
+            "ci_attested must attest the signed work, not another commit"
+        )
+    sha = signed_head
     fetcher = ctx.check_runs_fetcher
     if fetcher is None:
         if not ctx.token:
@@ -498,6 +610,14 @@ def _verify_ci_attested(ctx: GateContext, item: dict, signed_head: str) -> tuple
             continue
         if wanted_id is None and run.get("name") != wanted_name:
             continue
+        # Defense in depth: require the API's own head_sha on the run to match
+        # the commit we asked about. Anything else (missing field included)
+        # fails closed.
+        if run.get("head_sha") != sha:
+            return False, (
+                f"check run '{run.get('name')}' reports head_sha "
+                f"{str(run.get('head_sha'))[:12]!r}, not the signed head {sha[:12]} — refusing cross-commit attestation"
+            )
         if run.get("status") != "completed":
             return False, f"check run '{run.get('name')}' at {sha[:12]} has not completed"
         if run.get("conclusion") != "success":
@@ -506,45 +626,110 @@ def _verify_ci_attested(ctx: GateContext, item: dict, signed_head: str) -> tuple
     return False, f"no check run matching {wanted_id or wanted_name!r} found at {sha[:12]}"
 
 
+def _github_get_json(url: str, token: str) -> tuple[Any, str]:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "signed-agent-receipts-gate",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+        return payload, response.headers.get("Link", "")
+
+
+def _next_page(link_header: str) -> str | None:
+    for part in link_header.split(","):
+        if 'rel="next"' in part:
+            return part.split(";")[0].strip().strip("<>")
+    return None
+
+
 def _github_check_runs(repo: str, sha: str, token: str) -> list[dict]:
     runs: list[dict] = []
     url: str | None = f"https://api.github.com/repos/{repo}/commits/{sha}/check-runs?per_page=100"
     for _ in range(5):  # bounded pagination
         if url is None:
             break
-        request = urllib.request.Request(
-            url,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "signed-agent-receipts-gate",
-            },
-        )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-            runs.extend(payload.get("check_runs", []))
-            url = None
-            links = response.headers.get("Link", "")
-            for part in links.split(","):
-                if 'rel="next"' in part:
-                    url = part.split(";")[0].strip().strip("<>")
+        payload, links = _github_get_json(url, token)
+        runs.extend(payload.get("check_runs", []))
+        url = _next_page(links)
     return runs
 
 
+def _github_issue_events(repo: str, pr_number: int, token: str) -> list[dict]:
+    """Issue events for a PR (labels applied/removed, with actor). PRs are
+    issues in the GitHub API, so this covers pull requests."""
+    events: list[dict] = []
+    url: str | None = f"https://api.github.com/repos/{repo}/issues/{pr_number}/events?per_page=100"
+    for _ in range(10):  # bounded pagination
+        if url is None:
+            break
+        payload, links = _github_get_json(url, token)
+        if isinstance(payload, list):
+            events.extend(payload)
+        url = _next_page(links)
+    return events
+
+
+def _github_permission(repo: str, login: str, token: str) -> str | None:
+    """Effective repo permission for a user: admin | maintain | write |
+    triage | read | none (custom role names pass through and simply won't be
+    in WAIVER_PERMISSIONS). 404 means not a collaborator."""
+    url = f"https://api.github.com/repos/{repo}/collaborators/{urllib.parse.quote(login)}/permission"
+    try:
+        payload, _ = _github_get_json(url, token)
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return "none"
+        raise
+    role = payload.get("role_name") or payload.get("permission")
+    return role if isinstance(role, str) else None
+
+
 def _run_re_executable(ctx: GateContext, item: dict, signed_head: str) -> tuple[bool, str]:
+    # The command string is exact-match allowlisted from the base-branch
+    # policy before we get here, and it runs WITHOUT a shell: allowlist
+    # entries are argv-split, so shell metacharacters in a receipt cannot
+    # change what executes.
+    try:
+        argv = shlex.split(item["cmd"])
+    except ValueError as exc:
+        return False, f"cmd could not be parsed as an argv (no shell is used): {exc}"
+    if not argv:
+        return False, "cmd is empty after argv parsing"
+
     with _temp_worktree(ctx.repo_dir, signed_head) as workdir:
-        cwd = workdir / item["cwd"] if item.get("cwd") else workdir
+        # cwd must stay inside the verification worktree. An absolute or
+        # escaping cwd would let a receipt "pass" its command in a directory
+        # with none of the PR's code in it (e.g. an empty /tmp).
+        workdir_resolved = workdir.resolve()
+        cwd = workdir_resolved
+        raw_cwd = item.get("cwd")
+        if raw_cwd:
+            candidate = Path(raw_cwd)
+            if candidate.is_absolute() or ".." in candidate.parts:
+                return False, f"cwd {raw_cwd!r} rejected: must be a relative path with no '..' segments"
+            cwd = (workdir_resolved / candidate).resolve()
+            if not cwd.is_relative_to(workdir_resolved):  # symlink escapes land here
+                return False, f"cwd {raw_cwd!r} rejected: resolves outside the verification worktree"
+            if not cwd.is_dir():
+                return False, f"cwd {raw_cwd!r} rejected: not a directory at the signed head"
         try:
             proc = subprocess.run(
-                item["cmd"],
-                shell=True,
+                argv,
+                shell=False,
                 cwd=str(cwd),
                 capture_output=True,
                 timeout=RE_EXECUTABLE_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired:
             return False, f"command timed out after {RE_EXECUTABLE_TIMEOUT_SECONDS}s"
+        except (FileNotFoundError, PermissionError) as exc:
+            return False, f"command could not be executed: {exc}"
         if proc.returncode != item["expected_exit_code"]:
             return False, f"exit code {proc.returncode}, expected {item['expected_exit_code']}"
         if item.get("expected_output_sha256"):
@@ -572,16 +757,15 @@ def _temp_worktree(repo_dir: Path, sha: str):
 def consume_receipt(receipt: dict, ledger_path: str | Path, *, pr_number: int | None = None) -> bool:
     """Append the receipt's nonce to the local ledger file. Returns False if
     the nonce is already present. Intended for a post-merge job on the base
-    branch; stateless verifiers cannot enforce freshness (see SECURITY-MODEL.md)."""
+    branch; stateless verifiers cannot enforce freshness (see SECURITY-MODEL.md).
+
+    The check-then-append runs under an exclusive flock so concurrent
+    consumers on one machine cannot both claim the same nonce. Across
+    machines, serialization comes from the ledger living in git: two racing
+    consumers produce conflicting pushes, not a silently doubled nonce. On
+    platforms without fcntl the lock is skipped (documented residual)."""
     path = Path(ledger_path).expanduser()
     nonce = receipt["nonce"]
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            try:
-                if json.loads(line).get("nonce") == nonce:
-                    return False
-            except ValueError:
-                continue
     entry = {
         "nonce": nonce,
         "receipt_id": receipt.get("receipt_id"),
@@ -589,8 +773,22 @@ def consume_receipt(receipt: dict, ledger_path: str | Path, *, pr_number: int | 
         "consumed_at": utc_now(),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, sort_keys=True) + "\n")
+    with path.open("a+", encoding="utf-8") as f:
+        if fcntl is not None:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            f.seek(0)
+            for line in f.read().splitlines():
+                try:
+                    if json.loads(line).get("nonce") == nonce:
+                        return False
+                except ValueError:
+                    continue
+            f.write(json.dumps(entry, sort_keys=True) + "\n")
+            f.flush()
+        finally:
+            if fcntl is not None:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
     return True
 
 

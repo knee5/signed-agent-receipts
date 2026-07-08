@@ -1,23 +1,29 @@
 """Gate tests double as the adversarial harness: every rejection case here is
 a lie the plan says the gate must catch (mismatched deliverable, fabricated
-evidence, replay, task substitution, config tampering, stale signatures)."""
+evidence, borrowed CI attestations, worktree escapes, replay, task
+substitution, config tampering, self-applied waivers, stale signatures)."""
 
 import json
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from agent_receipts.gate import GateContext, consume_receipt, run_gate
-from agent_receipts.gitdiff import rev_parse
-from agent_receipts.receipt import hash_request_text
+from agent_receipts.gitdiff import canonical_diff_hash, rev_parse
+from agent_receipts.receipt import build_receipt, hash_request_text
 from agent_receipts.signing import public_key_material
 
 from tests.support import (
+    POLICY_YML,
     REPO_NAME,
     emit_and_attach_receipt,
     git,
     make_fixture,
     passing_check_runs,
+    permission_map,
+    resign_and_attach,
+    waiver_label_events,
 )
 
 
@@ -269,7 +275,7 @@ class LyingAgentTests(GateTestCase):
         )
 
         def failing_runs(repo, sha):
-            return [{"id": 11, "name": "python-ci", "status": "completed", "conclusion": "failure"}]
+            return [{"id": 11, "name": "python-ci", "status": "completed", "conclusion": "failure", "head_sha": sha}]
 
         report = run_gate(self.ctx(fixture, check_runs_fetcher=failing_runs))
         self.assertFalse(report.passed)
@@ -293,6 +299,128 @@ class LyingAgentTests(GateTestCase):
         self.assertReportContains(report, "not in policy re_executable_allowlist")
         self.assertFalse(canary.exists(), "gate must never execute non-allowlisted receipt commands")
 
+    def test_ci_attested_cannot_point_at_another_commit(self):
+        # The attack: keep a known-green commit around (here: the base) and
+        # write ITS sha into the evidence, so the gate fetches check runs for
+        # a commit that has nothing to do with the delivered diff.
+        fixture = make_fixture(self.tmp)
+        emit_and_attach_receipt(
+            fixture,
+            evidence=[
+                {
+                    "method": "ci_attested",
+                    "provider": "github",
+                    "check_name": "python-ci",
+                    "sha": fixture.base_sha,
+                }
+            ],
+        )
+        fetched: list[str] = []
+
+        def recording_runs(repo, sha):
+            fetched.append(sha)
+            return passing_check_runs(repo, sha)
+
+        report = run_gate(self.ctx(fixture, check_runs_fetcher=recording_runs))
+        self.assertFalse(report.passed)
+        self.assertReportContains(report, "not another commit")
+        self.assertNotIn(fixture.base_sha, fetched, "gate must not even query check runs for a foreign sha")
+
+    def test_ci_attested_run_head_sha_must_match_signed_head(self):
+        # Defense in depth: even if the API response is confused (or a fetcher
+        # is buggy), a run that says it ran against some other commit does not
+        # count.
+        fixture = make_fixture(self.tmp)
+        emit_and_attach_receipt(
+            fixture,
+            evidence=[{"method": "ci_attested", "provider": "github", "check_name": "python-ci"}],
+        )
+
+        def lying_runs(repo, sha):
+            return [
+                {"id": 11, "name": "python-ci", "status": "completed", "conclusion": "success", "head_sha": "f" * 40}
+            ]
+
+        report = run_gate(self.ctx(fixture, check_runs_fetcher=lying_runs))
+        self.assertFalse(report.passed)
+        self.assertReportContains(report, "cross-commit attestation")
+
+    def test_re_executable_absolute_cwd_rejected_and_never_executed(self):
+        # The attack: allowlisted command, but cwd pointed OUTSIDE the
+        # verification worktree (an empty dir passes many test commands).
+        # build_receipt refuses to sign this, so forge it the way a malicious
+        # emitter would: custom body, real signature from the trusted key.
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        policy = POLICY_YML.replace(
+            '    - "echo fixture-check"',
+            '    - "echo fixture-check"\n    - "touch escape-canary"',
+        )
+        fixture = make_fixture(self.tmp, policy_text=policy)
+        receipt = build_receipt(
+            request_hash=fixture.request_hash(),
+            repo=REPO_NAME,
+            pr_number=7,
+            base_sha=fixture.base_sha,
+            head_sha=fixture.work_head,
+            diff_hash=canonical_diff_hash(fixture.repo_dir, fixture.base_sha, fixture.work_head),
+            evidence=[{"method": "re_executable", "cmd": "touch escape-canary", "expected_exit_code": 0}],
+            key_path=fixture.key_path,
+        )
+        receipt["evidence"][0]["cwd"] = str(outside)
+        resign_and_attach(fixture, receipt)
+        report = run_gate(self.ctx(fixture))
+        self.assertFalse(report.passed)
+        self.assertReportContains(report, "cwd")
+        self.assertFalse((outside / "escape-canary").exists(), "command must never run outside the worktree")
+
+    def test_re_executable_symlink_cwd_escape_rejected(self):
+        # Structurally clean relative cwd ("linkdir") that is a committed
+        # symlink pointing outside the worktree. Containment must hold after
+        # resolving symlinks, not just on the path string.
+        outside = self.tmp / "outside-symlink"
+        outside.mkdir()
+        policy = POLICY_YML.replace(
+            '    - "echo fixture-check"',
+            '    - "echo fixture-check"\n    - "touch escape-canary"',
+        )
+        fixture = make_fixture(self.tmp, policy_text=policy)
+        (fixture.repo_dir / "linkdir").symlink_to(outside, target_is_directory=True)
+        git(fixture.repo_dir, "add", "linkdir")
+        git(fixture.repo_dir, "commit", "-qm", "add symlink")
+        fixture.work_head = rev_parse(fixture.repo_dir, "HEAD")
+        emit_and_attach_receipt(
+            fixture,
+            evidence=[
+                {
+                    "method": "re_executable",
+                    "cmd": "touch escape-canary",
+                    "expected_exit_code": 0,
+                    "cwd": "linkdir",
+                }
+            ],
+        )
+        report = run_gate(self.ctx(fixture))
+        self.assertFalse(report.passed)
+        self.assertReportContains(report, "resolves outside the verification worktree")
+        self.assertFalse((outside / "escape-canary").exists(), "command must never run outside the worktree")
+
+    def test_request_binding_required_fails_without_issuer_source(self):
+        # With require_request_binding on, a receipt whose request hash nobody
+        # issuer-side vouches for is exactly the "solved an easier task"
+        # attack — the gate must fail it rather than shrug.
+        policy = POLICY_YML.replace(
+            "settings:\n", "settings:\n  require_request_binding: true\n"
+        )
+        fixture = make_fixture(self.tmp, policy_text=policy)
+        emit_and_attach_receipt(
+            fixture,
+            evidence=[{"method": "ci_attested", "provider": "github", "check_name": "python-ci"}],
+        )
+        report = run_gate(self.ctx(fixture))
+        self.assertFalse(report.passed)
+        self.assertReportContains(report, "no request source")
+
     def test_ci_attestation_discounted_when_pr_changes_workflows(self):
         fixture = make_fixture(self.tmp)
         workflows = fixture.repo_dir / ".github" / "workflows"
@@ -310,20 +438,79 @@ class LyingAgentTests(GateTestCase):
         self.assertReportContains(report, "DISCOUNTED")
 
 
-class ModeTests(GateTestCase):
-    def test_waiver_label_passes_loudly_without_verification(self):
+class WaiverTests(GateTestCase):
+    """The waiver is an audited human bypass, not a label check. A bot with a
+    maintainer PAT can APPLY a label; the gate must therefore verify who
+    applied it and what they are allowed to do — and refuse when it cannot."""
+
+    def waiver_ctx(self, fixture, *, applier="maintainer-max", permission="admin", **overrides):
+        return self.ctx(
+            fixture,
+            labels=["human-waiver"],
+            label_events_fetcher=waiver_label_events("human-waiver", applier),
+            permission_fetcher=permission_map({applier: permission}),
+            **overrides,
+        )
+
+    def test_waiver_by_verified_maintainer_passes_loudly(self):
         fixture = make_fixture(self.tmp)
-        report = run_gate(self.ctx(fixture, labels=["human-waiver"]))
-        self.assertTrue(report.passed)
+        report = run_gate(self.waiver_ctx(fixture))
+        self.assertTrue(report.passed, [l.text for l in report.lines])
         self.assertTrue(report.waived)
         self.assertReportContains(report, "WAIVED")
+        self.assertReportContains(report, "maintainer-max")
 
+    def test_self_applied_waiver_by_low_permission_actor_not_honored(self):
+        # The attack: an automation account (triage rights, enough to label)
+        # applies the waiver to its own PR.
+        fixture = make_fixture(self.tmp)
+        report = run_gate(self.waiver_ctx(fixture, applier="agent-bot", permission="triage"))
+        self.assertFalse(report.passed)
+        self.assertFalse(report.waived)
+        self.assertReportContains(report, "NOT honored")
+        self.assertReportContains(report, "agent-bot")
+
+    def test_waiver_without_identity_proof_fails_closed(self):
+        # No token, no fetchers: the gate cannot know who applied the label,
+        # so the label must count for nothing.
+        fixture = make_fixture(self.tmp)
+        report = run_gate(self.ctx(fixture, labels=["human-waiver"]))
+        self.assertFalse(report.passed)
+        self.assertFalse(report.waived)
+        self.assertReportContains(report, "waiver NOT honored")
+
+    def test_waiver_never_bypasses_config_tamper_check(self):
+        # Even a genuine admin waiver must not merge a PR that rewrites the
+        # trust anchor: waiving verification is not the same as approving a
+        # change to WHO IS TRUSTED.
+        fixture = make_fixture(self.tmp)
+        signers_path = fixture.repo_dir / ".agent-receipts" / "trusted_signers.yml"
+        signers_path.write_text(signers_path.read_text() + "# tampered\n", encoding="utf-8")
+        git(fixture.repo_dir, "add", ".agent-receipts")
+        git(fixture.repo_dir, "commit", "-qm", "touch config")
+        fixture.pr_head = rev_parse(fixture.repo_dir, "HEAD")
+        report = run_gate(self.waiver_ctx(fixture))
+        self.assertFalse(report.passed)
+        self.assertFalse(report.waived)
+        self.assertReportContains(report, "PR modifies gate configuration")
+
+
+class ModeTests(GateTestCase):
     def test_bootstrap_mode_passes_with_notice_when_no_trust_anchor(self):
-        fixture = make_fixture(self.tmp, with_trust_anchor=False)
+        fixture = make_fixture(self.tmp, with_trust_anchor=False, with_policy=False)
         report = run_gate(self.ctx(fixture))
         self.assertTrue(report.passed)
         self.assertTrue(report.bootstrap)
         self.assertReportContains(report, "NOT CONFIGURED")
+
+    def test_policy_without_trust_anchor_fails_closed_not_bootstrap(self):
+        # A policy with no anchor is a half-configured gate (e.g. someone
+        # deleted just the anchor). That must not quietly demote to bootstrap.
+        fixture = make_fixture(self.tmp, with_trust_anchor=False, with_policy=True)
+        report = run_gate(self.ctx(fixture))
+        self.assertFalse(report.passed)
+        self.assertFalse(report.bootstrap)
+        self.assertReportContains(report, "half-configured")
 
     def test_malformed_trust_anchor_fails_closed(self):
         fixture = make_fixture(self.tmp)
@@ -350,6 +537,18 @@ class LedgerTests(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             entry = json.loads(lines[0])
             self.assertEqual(entry["pr"], 9)
+
+    def test_concurrent_consume_has_exactly_one_winner(self):
+        # The TOCTOU race: N consumers check "nonce absent" at once, then all
+        # append. The exclusive lock must reduce that to one winner and one
+        # ledger line.
+        with tempfile.TemporaryDirectory() as td:
+            ledger = Path(td) / "consumed.jsonl"
+            receipt = {"nonce": "cc" * 16, "receipt_id": "rcpt_y", "deliverable": {"pr_number": 4}}
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                results = list(pool.map(lambda _: consume_receipt(receipt, ledger), range(32)))
+            self.assertEqual(sum(results), 1, "exactly one consumer may claim a nonce")
+            self.assertEqual(len(ledger.read_text().strip().splitlines()), 1)
 
 
 if __name__ == "__main__":

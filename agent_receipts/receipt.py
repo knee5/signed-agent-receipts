@@ -171,6 +171,14 @@ def validate_evidence_item(item: Any, index: int) -> list[str]:
             problems.append(f"{where}: re_executable requires a non-empty 'cmd'")
         if not isinstance(item.get("expected_exit_code"), int):
             problems.append(f"{where}: re_executable requires integer 'expected_exit_code'")
+        cwd = item.get("cwd")
+        if cwd is not None and (
+            not isinstance(cwd, str) or not cwd or cwd.startswith("/") or ".." in cwd.split("/")
+        ):
+            problems.append(
+                f"{where}: re_executable 'cwd' must be a relative path inside the repo "
+                "(no absolute paths, no '..'; the gate additionally confines it to the worktree)"
+            )
     elif method == "content_addressed":
         path = item.get("path")
         if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):

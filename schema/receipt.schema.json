@@ -201,7 +201,9 @@
               "description": "Gates execute this ONLY if the exact string is allowlisted in the receiving repo's base-branch policy."
             },
             "cwd": {
-              "type": ["string", "null"]
+              "type": ["string", "null"],
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$",
+              "description": "Relative path inside the repo worktree. Verifiers reject absolute paths, '..' segments, and anything that resolves outside the worktree."
             },
             "expected_exit_code": {
               "type": "integer"

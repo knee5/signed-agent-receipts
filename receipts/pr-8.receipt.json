@@ -1,0 +1,58 @@
+{
+  "audience": "github:knee5/signed-agent-receipts",
+  "authorization": null,
+  "deliverable": {
+    "base_sha": "bb6426eaad7582a3921aa1e47349819b880b76cb",
+    "diff_hash": "sha256:ebd3873a1074e27b9ec258854da1945126ee88d192a5e0c071a9832b288d5162",
+    "head_sha": "92a5392fe8533d5b6d018e74133442b54f1a4102",
+    "pr_number": 8,
+    "repo": "knee5/signed-agent-receipts",
+    "type": "git_pr"
+  },
+  "evidence": [
+    {
+      "cmd": "python -m unittest",
+      "description": "Full unit test suite at the signed head. Allowlisted in .agent-receipts/policy.yml; the gate executes it without a shell in a contained verification worktree.",
+      "expected_exit_code": 0,
+      "method": "re_executable"
+    },
+    {
+      "description": "The delivered INSTALL-FOR-AGENTS.md, content-addressed at the signed head.",
+      "method": "content_addressed",
+      "path": "INSTALL-FOR-AGENTS.md",
+      "sha256": "sha256:7539a2563828ec038448620a4637874e4d9876836da8268a6080757d62467747"
+    },
+    {
+      "claim": "This receipt is valid for the head it binds. Per the demo script (docs/DEMO.md), the branch will be rewritten and force-pushed AFTER signing, so the gate is expected to refuse it as STALE — that refusal is the exhibit.",
+      "method": "self_claimed"
+    }
+  ],
+  "issued_at": "2026-07-08T14:32:45+00:00",
+  "judgment_calls": [
+    "The receipt is emitted honestly for work head 92a5392; the planned force-push that invalidates it is the point of this exhibit."
+  ],
+  "key": {
+    "key_id": "sha256:69ddf0429ee4d5224b69df5a025ca7a60dd0d825ea591e900f3ce3d56169374e",
+    "valid_from": "2026-07-08T04:54:54+00:00",
+    "valid_until": "2027-07-08T04:54:54+00:00"
+  },
+  "nonce": "5a75c10b9b4aa079f05d10b87368ac16",
+  "purpose": "github-pr-gate",
+  "receipt_id": "rcpt_c0d80acca9db05b6",
+  "request": {
+    "content_type": "text/plain; charset=utf-8",
+    "hash": "sha256:f74b70e5e8e4397e3ea46726f38bc0331406ad089cb33530ff12e83281adcf35",
+    "preview": "Add the v0.2 git-install path to INSTALL-FOR-AGENTS.md, then rewrite history after signing so the gate demonstrates the STALE refusal.",
+    "source": "tasks/pr-8.md, committed to the base branch by the issuer"
+  },
+  "run_refs": [],
+  "schema_version": "agent-receipt.v0.2",
+  "signature": {
+    "algorithm": "ed25519",
+    "canonicalization": "canonical-json-v1",
+    "key_id": "sha256:69ddf0429ee4d5224b69df5a025ca7a60dd0d825ea591e900f3ce3d56169374e",
+    "public_key": "Gwyi/jRahYg2XAQj3QMLJ8ewn0BBD7mJ4rkLZnvvxOE=",
+    "value": "/tEFwdb5j99+I7oONUdx1yXwjMsoHhBhmSQxHFX758BGzNUwiT0uw6fgn4nt4bttfBKHeQ/GlMsP8W0WpHzdBQ=="
+  },
+  "signers": []
+}

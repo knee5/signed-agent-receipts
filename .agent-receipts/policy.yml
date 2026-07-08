@@ -1,0 +1,38 @@
+# Acceptance policy for the receipts-gate. Read ONLY from the base branch.
+#
+# A valid signature is authorship + integrity + binding — it is not
+# acceptance. This file decides how strong the VERIFIED evidence must be for
+# the paths a PR touches. Rules are matched in order; first match wins;
+# paths matching no rule fall back to default_require (fail closed).
+version: 1
+
+settings:
+  # Every PR needs a receipt. Scoping to "agent PRs only" is unenforceable —
+  # an agent pushing under a human's token is indistinguishable from the
+  # human. Humans bypass via the maintainer-applied waiver label instead.
+  require_receipt: true
+  waiver_label: human-waiver
+  # If a PR modifies workflow files, a green check attests whatever the
+  # modified workflow does — so CI attestations are discounted for that PR.
+  distrust_ci_when_workflows_change: true
+  # Request binding needs the gate to know the issued task (see the action's
+  # request-source-file input). Off until this repo commits task files.
+  require_request_binding: false
+  # The ONLY commands the gate will ever execute from a receipt. Receipts are
+  # signed, not trusted; execution rights come from this file, on the base
+  # branch, under maintainer review.
+  re_executable_allowlist:
+    - "python -m unittest"
+
+# Anything not matched below: code. Require evidence a receiver can actually
+# check — a re-executed command or a GitHub-attested CI run.
+default_require: [re_executable, ci_attested]
+
+rules:
+  - name: docs-and-prose
+    paths: ["docs/**", "**/*.md", "llms.txt", "LICENSE"]
+    require: []   # receipt still required; no evidence-strength requirement
+
+  - name: receipt-attachments
+    paths: ["receipts/**"]
+    require: []

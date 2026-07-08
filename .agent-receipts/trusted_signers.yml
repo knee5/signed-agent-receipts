@@ -1,0 +1,20 @@
+# Trust anchor for the receipts-gate. The gate reads this file ONLY from the
+# base branch of a PR — a PR that modifies it fails until a maintainer
+# reviews it. Changes here decide whose signatures this repository accepts;
+# treat every edit as a security decision.
+#
+# Enforcement this file depends on (repo settings, not enforceable from here):
+#   1. Branch protection on main with receipts-gate as a required check.
+#   2. CODEOWNERS review required, with /.agent-receipts/ owned by maintainers.
+# Without those, "read from the protected base branch" protects less than it
+# should — see SECURITY-MODEL.md.
+version: 1
+signers:
+  - name: clevin-claude-code
+    # Claude Code agent identity on clevin's workstation. Key lives at the
+    # default local path and never leaves the machine.
+    key_id: "sha256:69ddf0429ee4d5224b69df5a025ca7a60dd0d825ea591e900f3ce3d56169374e"
+    public_key: "Gwyi/jRahYg2XAQj3QMLJ8ewn0BBD7mJ4rkLZnvvxOE="
+    valid_from: "2026-07-08T04:54:54+00:00"
+    valid_until: "2027-07-08T04:54:54+00:00"
+revoked_keys: []

@@ -1,0 +1,23 @@
+# Dogfood: this repo runs its own receipts-gate on every PR.
+# labeled/unlabeled are included so applying the human-waiver label re-runs
+# the gate instead of leaving a stale failing check.
+name: receipts-gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  checks: read
+
+jobs:
+  receipts-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./
+        with:
+          github-token: ${{ github.token }}

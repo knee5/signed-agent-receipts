@@ -1,0 +1,9 @@
+# The trust anchor and policy decide whose signatures this repo accepts and
+# what evidence is enough. Changes to them — and to the gate's own workflow
+# wiring — require maintainer review.
+#
+# NOTE: CODEOWNERS only bites when branch protection on main requires
+# code-owner review. Repo-settings checklist lives in docs/RECEIPTS-GATE.md.
+/.agent-receipts/  @knee5
+/.github/          @knee5
+/action.yml        @knee5

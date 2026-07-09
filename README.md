@@ -44,6 +44,7 @@ key. Every PR needs a receipt — the only bypass is a maintainer-applied
 [docs/DEMO.md](docs/DEMO.md): three open demo PRs, one green, two red, each
 for the right reason.
 
+Why require one (verifier side): [docs/ACCEPTING-AGENT-WORK.md](docs/ACCEPTING-AGENT-WORK.md) ·
 Install and operate: [docs/RECEIPTS-GATE.md](docs/RECEIPTS-GATE.md) ·
 Receipt schema: [schema/receipt.schema.json](schema/receipt.schema.json)
 

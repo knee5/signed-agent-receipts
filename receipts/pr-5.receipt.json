@@ -1,0 +1,58 @@
+{
+  "audience": "github:knee5/signed-agent-receipts",
+  "authorization": null,
+  "deliverable": {
+    "base_sha": "bb6426eaad7582a3921aa1e47349819b880b76cb",
+    "diff_hash": "sha256:079ed34e63dbd9bd70db09ee774a4726cdb857cd4f93be5c268db0bb8327768e",
+    "head_sha": "05d8b65510687ae25dc2a2a997562f99cd28b888",
+    "pr_number": 5,
+    "repo": "knee5/signed-agent-receipts",
+    "type": "git_pr"
+  },
+  "evidence": [
+    {
+      "cmd": "python -m unittest",
+      "description": "Full unit test suite at the signed head. Allowlisted in .agent-receipts/policy.yml; the gate executes it without a shell in a contained verification worktree.",
+      "expected_exit_code": 0,
+      "method": "re_executable"
+    },
+    {
+      "description": "The delivered README.md, content-addressed at the signed head.",
+      "method": "content_addressed",
+      "path": "README.md",
+      "sha256": "sha256:ea6de00707918ecc20e809704e052b4310b488dc813b03d63e70ef287408d243"
+    },
+    {
+      "claim": "Docs-only change, rendered and proofread locally. This PR is one half of the public receipts-gate demonstration (docs/DEMO.md); its twin carries no receipt and fails the same check.",
+      "method": "self_claimed"
+    }
+  ],
+  "issued_at": "2026-07-08T14:28:56+00:00",
+  "judgment_calls": [
+    "This PR is a public demonstration. The receipt is real: same key, same flow, same gate as any working PR to this repo."
+  ],
+  "key": {
+    "key_id": "sha256:69ddf0429ee4d5224b69df5a025ca7a60dd0d825ea591e900f3ce3d56169374e",
+    "valid_from": "2026-07-08T04:54:54+00:00",
+    "valid_until": "2027-07-08T04:54:54+00:00"
+  },
+  "nonce": "7fa3a6b6b2b0db819d66d923eab0f7b5",
+  "purpose": "github-pr-gate",
+  "receipt_id": "rcpt_76e2baac6ff959a4",
+  "request": {
+    "content_type": "text/plain; charset=utf-8",
+    "hash": "sha256:dfdcae0aafcb21e635f28206c433ccd2498c4c6711b724fc58e20b64f63c94c8",
+    "preview": "Add a 'verify a receipt without trusting the author' section to README.md; docs-only, clearly-labeled demo PR with a v0.2 receipt (sign-then-attach).",
+    "source": "tasks/pr-5.md, committed to the base branch by the issuer (PR #6)"
+  },
+  "run_refs": [],
+  "schema_version": "agent-receipt.v0.2",
+  "signature": {
+    "algorithm": "ed25519",
+    "canonicalization": "canonical-json-v1",
+    "key_id": "sha256:69ddf0429ee4d5224b69df5a025ca7a60dd0d825ea591e900f3ce3d56169374e",
+    "public_key": "Gwyi/jRahYg2XAQj3QMLJ8ewn0BBD7mJ4rkLZnvvxOE=",
+    "value": "LHdRdwWGrmMt9cg2jgP0THckUs3E50jp2S+aOLYWwatlDqu/SBcVmEC2FX2ggvmwH18mtY4ycZXlaQZw44jLCw=="
+  },
+  "signers": []
+}

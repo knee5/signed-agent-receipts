@@ -30,6 +30,16 @@ python3 -m pip install --upgrade signed-agent-receipts
 pipx install signed-agent-receipts
 ```
 
+PyPI carries v0.1.x (run-ledger receipts). The v0.2 commands — `receipt`,
+`verify-receipt`, `gate`, `consume`, used by repos that enforce the CI gate —
+are not on PyPI yet; install from git to get them:
+
+```bash
+python3 -m pip install "git+https://github.com/knee5/signed-agent-receipts"
+# pipx users:
+pipx install "git+https://github.com/knee5/signed-agent-receipts"
+```
+
 ### 2. Emit a signed receipt for your recent work
 
 From the root of the repo you're working in:

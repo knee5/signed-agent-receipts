@@ -6,6 +6,14 @@ independently recomputes the PR diff hash; it verifies typed evidence; and it
 applies your acceptance policy. Read [SECURITY-MODEL.md](../SECURITY-MODEL.md)
 first — it says exactly what this does and does not prove.
 
+Jump to: [workflow](#1-add-the-workflow) ·
+[trust anchor + policy](#2-add-the-trust-anchor-and-policy-on-your-default-branch) ·
+[repo settings](#3-lock-the-config-down-repo-settings--required) ·
+[attaching receipts](#4-how-agents-attach-receipts-sign-then-attach) ·
+[request binding](#5-request-binding-how-an-issuer-supplies-the-expected-request) ·
+[canonical diff](#7-the-canonical-diff-exactly) ·
+[failure modes](#failure-modes-you-will-actually-see)
+
 ## 1. Add the workflow
 
 ```yaml
